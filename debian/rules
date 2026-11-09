@@ -1,0 +1,12 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_test:
+	PYTHONPYCACHEPREFIX=$(CURDIR)/debian/.pycache python3 -m compileall -q .
+	rm -rf $(CURDIR)/debian/.pycache
+
+override_dh_fixperms:
+	dh_fixperms
+	find debian/local-optimize/usr/lib/local-optimize -type f -name '*.py' -exec grep -l '^#!' {} + | xargs -r chmod +x

@@ -37,6 +37,12 @@ dist/
 *.tar
 *.tar.gz
 *.tgz
+*.deb
+*.dsc
+*.buildinfo
+*.changes
+*.debian.tar.*
+*.orig.tar.*
 backup/
 backups/
 

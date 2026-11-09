@@ -1,0 +1,16 @@
+[Unit]
+Description=Local Optimize RAG server
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+WorkingDirectory=/usr/lib/local-optimize
+ExecStartPre=/usr/bin/test -f %h/.config/local-optimize/secrets.env
+EnvironmentFile=%h/.config/local-optimize/secrets.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/local-optimize server
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

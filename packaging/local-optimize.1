@@ -1,0 +1,57 @@
+.TH LOCAL-OPTIMIZE 1 "November 2026" "local-optimize 1.0.0" "User Commands"
+.SH NAME
+local-optimize \- run the local-first MCP/RAG engine
+.SH SYNOPSIS
+.B local-optimize
+.I command
+.RI [ arguments ]
+.SH DESCRIPTION
+.B local-optimize
+runs application entry points from /usr/lib/local-optimize using the current user's Python virtual environment.
+It does not create models, secrets, databases or agent configuration.
+.PP
+The Python interpreter is read from
+.B LOCAL_OPTIMIZE_VENV
+or from ~/.local/share/local-optimize/venv.
+.B LOCAL_OPTIMIZE_ROOT
+can override the application directory for packaging checks.
+.SH COMMANDS
+.TP
+.B migrate
+Apply PostgreSQL migrations. This does not migrate agents.
+.TP
+.B server
+Run the FastAPI server.
+.TP
+.B watchdog
+Run filesystem indexing.
+.TP
+.B mcp
+Run the full local-only MCP server.
+.TP
+.B lmstudio-mcp
+Run the read-only LM Studio MCP wrapper.
+.TP
+.B index
+Index the registered project.
+.TP
+.B version
+Print the package version.
+.TP
+.B help
+Print command help.
+.SH FILES
+.TP
+.I /usr/lib/local-optimize
+Application files.
+.TP
+.I ~/.config/local-optimize/secrets.env
+User-managed secrets; never installed by the package.
+.TP
+.I ~/.local/share/local-optimize/venv
+Default Python environment.
+.SH SEE ALSO
+.BR systemctl (1),
+.BR python3 (1)
+.PP
+Full documentation is installed in /usr/share/doc/local-optimize/.

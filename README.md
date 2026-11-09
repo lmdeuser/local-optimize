@@ -77,6 +77,7 @@ python -m pip install -r requirements.txt
 ## Документация
 
 - [Установка и настройка](docs/installation.md)
+- [Сборка DEB и OBS](docs/packaging.md)
 - [Архитектура](ARCHITECTURE.md)
 - [Полное системное описание](SYSTEM.md)
 - [MCP-инструменты](MCP_TOOLS.md)

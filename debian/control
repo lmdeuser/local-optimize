@@ -1,0 +1,19 @@
+Source: local-optimize
+Section: utils
+Priority: optional
+Maintainer: Local Optimize contributors <28979718+lmdeuser@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13), python3
+Standards-Version: 4.7.0
+Homepage: https://github.com/lmdeuser/local-optimize
+Rules-Requires-Root: no
+
+Package: local-optimize
+Architecture: all
+Depends: ${misc:Depends}, ca-certificates, python3 (>= 3.12), python3-pip, python3-venv
+Description: local-first MCP/RAG memory for AI agents
+ Local Optimize provides scoped PostgreSQL/pgvector retrieval, GraphRAG,
+ local Intel XPU reranking and local-only Ollama/MCP integration.
+ .
+ This package installs application files and inactive user service templates.
+ Model weights, Python virtual environments, secrets and agent configuration
+ are managed separately and are not created by the package installation.

@@ -1,0 +1,13 @@
+*.py usr/lib/local-optimize/
+local_model.json usr/lib/local-optimize/
+requirements*.txt usr/lib/local-optimize/
+retrieval_policy.json usr/lib/local-optimize/
+deploy/intel-xpu-requirements.txt usr/lib/local-optimize/deploy/
+docs usr/share/doc/local-optimize/
+evaluation usr/lib/local-optimize/
+hooks usr/lib/local-optimize/
+migrations usr/lib/local-optimize/
+skills usr/lib/local-optimize/
+packaging/local-optimize usr/bin/
+packaging/systemd/gpu-rag-server.service usr/lib/systemd/user/
+packaging/systemd/watchdog-indexer.service usr/lib/systemd/user/

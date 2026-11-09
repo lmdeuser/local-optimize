@@ -40,7 +40,7 @@ EXCLUDED_NAMES = {
     "install_central_system_status.md",
 }
 EXCLUDED_SUFFIXES = {".pyc", ".pyo", ".zip", ".log", ".coverage"}
-ALLOWED_DIRECTORIES = {"docs", "evaluation", "hooks", "migrations", "skills", "tests"}
+ALLOWED_DIRECTORIES = {"debian", "docs", "evaluation", "hooks", "migrations", "obs", "packaging", "skills", "tests"}
 ALLOWED_SUPPORT_FILES = {"deploy/intel-xpu-requirements.txt"}
 ALLOWED_ROOT_FILES = {
     ".gitignore",

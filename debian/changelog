@@ -1,0 +1,7 @@
+local-optimize (1.0.0-1) noble; urgency=medium
+
+  * Initial Debian and openSUSE Build Service package.
+  * Install the application, CLI and inactive user service templates.
+  * Keep models, secrets and agent migration outside package installation.
+
+ -- Local Optimize contributors <28979718+lmdeuser@users.noreply.github.com>  Mon, 09 Nov 2026 09:30:00 +0500

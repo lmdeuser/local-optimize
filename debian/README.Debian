@@ -1,0 +1,40 @@
+Local Optimize on Debian/Ubuntu
+================================
+
+The package installs application code in /usr/lib/local-optimize, the
+/usr/bin/local-optimize CLI and inactive systemd user units. It does not
+create databases, secrets, model directories, virtual environments or agent
+configuration, and it does not enable or start services.
+
+Create a per-user Python environment after installing the package:
+
+  python3 -m venv ~/.local/share/local-optimize/venv
+  ~/.local/share/local-optimize/venv/bin/python -m pip install --upgrade pip
+  ~/.local/share/local-optimize/venv/bin/python -m pip install --no-deps \
+    -r /usr/lib/local-optimize/deploy/intel-xpu-requirements.txt
+  ~/.local/share/local-optimize/venv/bin/python -m pip install \
+    -r /usr/lib/local-optimize/requirements.txt
+
+Install the model snapshots and Ollama model, create the PostgreSQL database
+and ~/.config/local-optimize/secrets.env as described in
+/usr/share/doc/local-optimize/docs/installation.md. Replace repository paths
+in that guide with /usr/lib/local-optimize where appropriate.
+
+Commands:
+
+  local-optimize migrate        Apply database migrations
+  local-optimize server         Run the FastAPI server
+  local-optimize watchdog       Run filesystem indexing
+  local-optimize mcp            Run the full local-only MCP server
+  local-optimize lmstudio-mcp   Run the read-only LM Studio wrapper
+  local-optimize index          Index the registered project
+
+LOCAL_OPTIMIZE_VENV can override ~/.local/share/local-optimize/venv.
+LOCAL_OPTIMIZE_ROOT can override /usr/lib/local-optimize for packaging checks.
+
+The user units are templates only:
+
+  systemctl --user enable --now gpu-rag-server.service watchdog-indexer.service
+
+Enable them only after completing runtime setup and health checks. Agent
+installation and migration to a new engine are intentionally separate tasks.

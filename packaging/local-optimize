@@ -1,0 +1,69 @@
+#!/bin/sh
+set -eu
+
+APP_ROOT=${LOCAL_OPTIMIZE_ROOT:-/usr/lib/local-optimize}
+VERSION=1.0.0
+
+usage() {
+    cat <<'EOF'
+Usage: local-optimize <command> [arguments]
+
+Commands:
+  migrate        Apply PostgreSQL migrations
+  server         Run the FastAPI server
+  watchdog       Run filesystem indexing
+  mcp            Run the full local-only MCP server
+  lmstudio-mcp   Run the read-only LM Studio MCP wrapper
+  index          Index the registered project
+  version        Print the package version
+  help           Print this help
+
+The Python environment is read from LOCAL_OPTIMIZE_VENV or
+~/.local/share/local-optimize/venv.
+EOF
+}
+
+if [ "$#" -eq 0 ]; then
+    usage >&2
+    exit 2
+fi
+
+command=$1
+shift
+case "$command" in
+    help|--help|-h)
+        usage
+        exit 0
+        ;;
+    version|--version)
+        printf '%s\n' "$VERSION"
+        exit 0
+        ;;
+esac
+
+DATA_HOME=${XDG_DATA_HOME:-${HOME:?HOME must be set}/.local/share}
+VENV=${LOCAL_OPTIMIZE_VENV:-$DATA_HOME/local-optimize/venv}
+PYTHON=$VENV/bin/python
+if [ ! -x "$PYTHON" ]; then
+    printf '%s\n' "Python environment not found: $PYTHON" >&2
+    printf '%s\n' 'See /usr/share/doc/local-optimize/README.Debian for setup.' >&2
+    exit 1
+fi
+
+case "$command" in
+    migrate) script=create_schema.py ;;
+    server) script=gpu_rag_server.py ;;
+    watchdog) script=watchdog_indexer.py ;;
+    mcp) script=mcp_server.py ;;
+    lmstudio-mcp) script=lmstudio_rag_mcp.py ;;
+    index) script=index_project_codebase.py ;;
+    *)
+        printf 'Unknown command: %s\n' "$command" >&2
+        usage >&2
+        exit 2
+        ;;
+esac
+
+export PYTHONPATH="$APP_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+cd "$APP_ROOT"
+exec "$PYTHON" "$APP_ROOT/$script" "$@"
