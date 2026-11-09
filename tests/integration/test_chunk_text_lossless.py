@@ -13,7 +13,7 @@ from transformers import AutoTokenizer
 import rag_engine
 from rag_engine import RagEngine
 
-pytestmark = pytest.mark.unit
+pytestmark = pytest.mark.integration
 
 
 @pytest.fixture(scope="module")
