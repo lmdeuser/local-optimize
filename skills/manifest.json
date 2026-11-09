@@ -1,0 +1,510 @@
+{
+  "version": "1.0.0",
+  "updated_at": "2026-07-26",
+  "skills": [
+    {
+      "id": "environment-discovery",
+      "filename": "environment-discovery.md",
+      "required": true,
+      "version": "1.0.0",
+      "description": "Environment & Identity Discovery Protocol",
+      "aliases": [
+        "identity",
+        "system_discovery_protocol"
+      ]
+    },
+    {
+      "id": "security-review",
+      "filename": "security-review.md",
+      "required": true,
+      "version": "1.0.0",
+      "description": "Security Policy & Code Audit Protocol",
+      "aliases": [
+        "security_policy",
+        "red_team"
+      ]
+    },
+    {
+      "id": "project-memory",
+      "filename": "project-memory.md",
+      "required": true,
+      "version": "1.0.0",
+      "description": "Project Memory & Vector Integration Protocol",
+      "aliases": [
+        "memory_protocol",
+        "rag_protocol_v1",
+        "vector_memory_integration"
+      ]
+    },
+    {
+      "id": "task-execution",
+      "filename": "task-execution.md",
+      "required": true,
+      "version": "1.0.0",
+      "description": "Task Execution & Tool Usage Guidelines",
+      "aliases": [
+        "doing_tasks",
+        "tool_use"
+      ]
+    },
+    {
+      "id": "code-engineering-core",
+      "filename": "code-engineering-core.md",
+      "required": true,
+      "version": "1.0.0",
+      "description": "Global Code Engineering Standards",
+      "aliases": [
+        "global_code_quality",
+        "super_code"
+      ],
+      "activation_keywords": [
+        "код",
+        "refactor",
+        "качество",
+        "архитектур"
+      ]
+    },
+    {
+      "id": "python-engineering",
+      "filename": "python-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Senior Python Architecture Guidelines",
+      "aliases": [
+        "senior_python"
+      ],
+      "activation_keywords": [
+        "python",
+        "py",
+        "ast",
+        "class",
+        "def",
+        "парсер"
+      ]
+    },
+    {
+      "id": "postgres-engineering",
+      "filename": "postgres-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "PostgreSQL & Database Architecture",
+      "aliases": [
+        "senior_postgres"
+      ],
+      "activation_keywords": [
+        "postgres",
+        "sql",
+        "db",
+        "database",
+        "миграц"
+      ]
+    },
+    {
+      "id": "bash-engineering",
+      "filename": "bash-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Bash Shell Scripting & Infrastructure",
+      "aliases": [
+        "senior_bash"
+      ],
+      "activation_keywords": [
+        "bash",
+        "sh",
+        "shell",
+        "команд",
+        "run",
+        "cli"
+      ]
+    },
+    {
+      "id": "docker-engineering",
+      "filename": "docker-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Docker Containerization Protocols",
+      "aliases": [
+        "senior_docker"
+      ],
+      "activation_keywords": [
+        "docker",
+        "container",
+        "dockerfile",
+        "контейнер"
+      ]
+    },
+    {
+      "id": "fastapi-engineering",
+      "filename": "fastapi-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "FastAPI Web Backend Development",
+      "aliases": [
+        "senior_fastapi"
+      ],
+      "activation_keywords": [
+        "fastapi",
+        "endpoint",
+        "route",
+        "http",
+        "api"
+      ]
+    },
+    {
+      "id": "android-engineering",
+      "filename": "android-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Android Development & 16KB Page Protocols",
+      "aliases": [
+        "senior_android"
+      ]
+    },
+    {
+      "id": "authorized-red-team",
+      "filename": "authorized-red-team.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Authorized Red Team Assessment Standards",
+      "aliases": [
+        "red_team_auth"
+      ]
+    },
+    {
+      "id": "cpp-engineering",
+      "filename": "cpp-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "C++ Modern System Engineering",
+      "aliases": [
+        "senior_cpp"
+      ]
+    },
+    {
+      "id": "documentation-retrieval",
+      "filename": "documentation-retrieval.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "External Documentation Retrieval Protocol",
+      "aliases": [
+        "docs_lookup"
+      ]
+    },
+    {
+      "id": "flutter-engineering",
+      "filename": "flutter-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Flutter Cross-Platform Architecture",
+      "aliases": [
+        "senior_flutter"
+      ]
+    },
+    {
+      "id": "game-physics-engineering",
+      "filename": "game-physics-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Game Physics & Simulation Systems",
+      "aliases": [
+        "ultra_game_physics"
+      ]
+    },
+    {
+      "id": "git-engineering",
+      "filename": "git-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Git Version Control & Workflow Management",
+      "aliases": [
+        "senior_git"
+      ]
+    },
+    {
+      "id": "graphics-engineering",
+      "filename": "graphics-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Graphics & Shading System Architecture",
+      "aliases": [
+        "ultra_graphics_architect"
+      ]
+    },
+    {
+      "id": "hardware-analysis",
+      "filename": "hardware-analysis.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Hardware Analysis & Manifesto Protocols",
+      "aliases": [
+        "hardware_agent_manifesto"
+      ]
+    },
+    {
+      "id": "javascript-typescript-engineering",
+      "filename": "javascript-typescript-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "JavaScript & TypeScript Frontend Architecture",
+      "aliases": [
+        "senior_js"
+      ]
+    },
+    {
+      "id": "kotlin-engineering",
+      "filename": "kotlin-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Kotlin JVM & Mobile Engineering",
+      "aliases": [
+        "senior_kotlin"
+      ]
+    },
+    {
+      "id": "llm-rag-engineering",
+      "filename": "llm-rag-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "LLM & RAG Architecture Protocols",
+      "aliases": [
+        "senior_llm_engineer"
+      ]
+    },
+    {
+      "id": "macos-engineering",
+      "filename": "macos-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "macOS Development & Security Architecture",
+      "aliases": [
+        "senior_macos_expert"
+      ]
+    },
+    {
+      "id": "network-protocol-engineering",
+      "filename": "network-protocol-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Network Protocols & Socket Engineering",
+      "aliases": [
+        "ultra_network_protocol"
+      ]
+    },
+    {
+      "id": "prompt-engineering",
+      "filename": "prompt-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Prompt Optimization & System Directives",
+      "aliases": [
+        "prompt_engineer"
+      ]
+    },
+    {
+      "id": "reverse-engineering",
+      "filename": "reverse-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Reverse Engineering & Disassembly Protocols",
+      "aliases": [
+        "ida_expert"
+      ]
+    },
+    {
+      "id": "rust-engineering",
+      "filename": "rust-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Rust Systems Programming Standards",
+      "aliases": [
+        "senior_rust"
+      ]
+    },
+    {
+      "id": "tool-selection",
+      "filename": "tool-selection.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Dynamic Tool Selection Protocols",
+      "aliases": [
+        "select_tools"
+      ]
+    },
+    {
+      "id": "ubuntu-engineering",
+      "filename": "ubuntu-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Ubuntu & Linux Administration Architecture",
+      "aliases": [
+        "ultra_ubuntu_expert"
+      ]
+    },
+    {
+      "id": "windows-engineering",
+      "filename": "windows-engineering.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Windows System Engineering Protocols",
+      "aliases": [
+        "senior_windows_expert"
+      ]
+    },
+    {
+      "id": "context7-mcp",
+      "filename": "context7-mcp.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Context7 MCP External Documentation Lookup Protocol",
+      "aliases": [
+        "context7",
+        "docs_mcp",
+        "library_docs"
+      ],
+      "activation_keywords": [
+        "context7",
+        "docs",
+        "документация",
+        "библиотека",
+        "sdk",
+        "api_docs"
+      ]
+    },
+    {
+      "id": "sentinel-os-v2",
+      "filename": "sentinel-os-v2.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Sentinel-OS Blue Team & Incident Response Protocol v2.0",
+      "aliases": [
+        "sentinel_os",
+        "blue_team_v2",
+        "incident_response"
+      ],
+      "activation_keywords": [
+        "sentinel",
+        "blue_team",
+        "инцидент",
+        "оборона",
+        "mitre",
+        "d3fend",
+        "ioc"
+      ]
+    },
+    {
+      "id": "system-resource-manager",
+      "filename": "system-resource-manager.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "System Resource Limits & Operational Tuning Protocol",
+      "aliases": [
+        "resource_manager",
+        "sys_resources",
+        "performance_tuning"
+      ],
+      "activation_keywords": [
+        "память",
+        "процесс",
+        "gpu",
+        "vram",
+        "ram",
+        "resource",
+        "limits"
+      ]
+    },
+    {
+      "id": "skill-creation",
+      "filename": "skill-creation.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Agent Skill Authoring & Registration Protocol",
+      "aliases": [
+        "create_skill",
+        "author_skill",
+        "skill_authoring"
+      ],
+      "activation_keywords": [
+        "создать скил",
+        "новый скил",
+        "create skill",
+        "skill format"
+      ]
+    },
+    {
+      "id": "security-code-review",
+      "filename": "security-code-review.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Automated Security Code Review Protocol",
+      "aliases": [
+        "review_security_code",
+        "sec_code_audit"
+      ],
+      "activation_keywords": [
+        "аудит кода",
+        "security review",
+        "код ревью",
+        "проверка уязвимостей"
+      ]
+    },
+    {
+      "id": "bug-analysis-review",
+      "filename": "bug-analysis-review.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Static Analysis & Automated Bug Review Protocol",
+      "aliases": [
+        "review_bugbot",
+        "static_bug_check",
+        "static_analysis"
+      ],
+      "activation_keywords": [
+        "баги",
+        "ошибки",
+        "bugbot",
+        "static analysis",
+        "поиск багов"
+      ]
+    },
+    {
+      "id": "environment-setup",
+      "filename": "environment-setup.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Environment Setup & Dependency Verification Protocol",
+      "aliases": [
+        "env_setup",
+        "environment_config",
+        "dependency_setup"
+      ],
+      "activation_keywords": [
+        "окружение",
+        "setup",
+        "установка",
+        "зависимости",
+        "environment",
+        "venv"
+      ]
+    },
+    {
+      "id": "authorized-security-assessor",
+      "filename": "authorized-security-assessor.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Autonomous, evidence-driven security assessment protocol across apps, APIs, networks, cloud, and forensics.",
+      "aliases": [
+        "security_assessor",
+        "full_scope_pentest",
+        "sec_assessor"
+      ],
+      "activation_keywords": [
+        "security audit",
+        "pentest",
+        "vulnerability assessment",
+        "безопасность",
+        "аудит",
+        "пентест"
+      ]
+    }
+  ]
+}

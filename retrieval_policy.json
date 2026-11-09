@@ -1,0 +1,12 @@
+{
+  "version": "qwen-xpu-evidence-v3",
+  "model_path": "models/Qwen3-Reranker-0.6B",
+  "model_revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473",
+  "candidate_limit": 24,
+  "document_candidates": 8,
+  "max_length": 768,
+  "batch_size": 4,
+  "relevance_threshold": 0.5,
+  "facet_threshold": 0.05,
+  "deadline_seconds": 15.0
+}

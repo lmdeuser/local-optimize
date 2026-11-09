@@ -1,0 +1,418 @@
+[
+  {
+    "id": "p00",
+    "query": "Как работает HNSW индекс?",
+    "paths": [
+      ".sql"
+    ],
+    "terms": [
+      "hnsw"
+    ],
+    "answerable": true,
+    "split": "dev"
+  },
+  {
+    "id": "p01",
+    "query": "Для чего используется ProjectContext?",
+    "paths": [
+      "project_context.py",
+      "ARCHITECTURE.md"
+    ],
+    "terms": [
+      "projectcontext"
+    ],
+    "answerable": true,
+    "split": "heldout"
+  },
+  {
+    "id": "p02",
+    "query": "Что делает очередь agent_messages?",
+    "paths": [
+      ".sql",
+      "rag_engine.py"
+    ],
+    "terms": [
+      "agent_messages"
+    ],
+    "answerable": true,
+    "split": "dev"
+  },
+  {
+    "id": "p03",
+    "query": "How does ProjectContext isolate private agent data?",
+    "paths": [
+      "project_context.py",
+      "ARCHITECTURE.md",
+      "DATABASE_SCHEMA.md"
+    ],
+    "terms": [
+      "session-private"
+    ],
+    "answerable": true,
+    "split": "heldout"
+  },
+  {
+    "id": "p04",
+    "query": "Что происходит с кешем, когда агент сохраняет новый факт?",
+    "paths": [
+      "query_cache.py",
+      "docs/query-cache.md",
+      "rag_engine.py"
+    ],
+    "terms": [
+      "generation"
+    ],
+    "answerable": true,
+    "split": "dev"
+  },
+  {
+    "id": "p05",
+    "query": "Как найти просроченные знания?",
+    "paths": [
+      "docs/knowledge-lifecycle.md",
+      "rag_engine.py"
+    ],
+    "terms": [
+      "overdue"
+    ],
+    "answerable": true,
+    "split": "heldout"
+  },
+  {
+    "id": "p06",
+    "query": "Как запретить агенту читать чужую приватную сессию?",
+    "paths": [
+      "project_context.py",
+      "rag_engine.py",
+      "ARCHITECTURE.md"
+    ],
+    "terms": [
+      "session-private"
+    ],
+    "answerable": true,
+    "split": "dev"
+  },
+  {
+    "id": "p07",
+    "query": "Что значит статус deprecated у знания?",
+    "paths": [
+      "docs/knowledge-lifecycle.md",
+      "rag_engine.py"
+    ],
+    "terms": [
+      "deprecated"
+    ],
+    "answerable": true,
+    "split": "heldout"
+  },
+  {
+    "id": "p08",
+    "query": "What happens when PostgreSQL is unavailable?",
+    "paths": [
+      "gpu_rag_server.py",
+      "ARCHITECTURE.md",
+      "rag_client.py"
+    ],
+    "terms": [
+      "unavailable"
+    ],
+    "answerable": true,
+    "split": "dev"
+  },
+  {
+    "id": "p09",
+    "query": "Как ограничено время поискового запроса?",
+    "paths": [
+      "gpu_rag_server.py",
+      "config.py",
+      "ARCHITECTURE.md"
+    ],
+    "terms": [
+      "timeout"
+    ],
+    "answerable": true,
+    "split": "heldout"
+  },
+  {
+    "id": "p10",
+    "query": "Где хранятся пароли подключения к базе?",
+    "paths": [
+      "config.py",
+      "ARCHITECTURE.md",
+      "SYSTEM.md",
+      "SYSTEM.md"
+    ],
+    "terms": [
+      "secrets"
+    ],
+    "answerable": true,
+    "split": "dev"
+  },
+  {
+    "id": "p11",
+    "query": "What does BoundedTTLCache do?",
+    "paths": [
+      "query_cache.py",
+      "docs/query-cache.md"
+    ],
+    "terms": [
+      "cache"
+    ],
+    "answerable": true,
+    "split": "heldout"
+  },
+  {
+    "id": "p12",
+    "query": "Как устроено кеширование запросов и инвалидация по поколениям?",
+    "paths": [
+      "query_cache.py",
+      "docs/query-cache.md",
+      "rag_engine.py"
+    ],
+    "terms": [
+      "generation"
+    ],
+    "answerable": true,
+    "split": "dev"
+  },
+  {
+    "id": "p13",
+    "query": "Зачем нужен заголовок X-Local-RAG-Session?",
+    "paths": [
+      "gpu_rag_server.py",
+      "rag_client.py",
+      "SYSTEM.md"
+    ],
+    "terms": [
+      "session"
+    ],
+    "answerable": true,
+    "split": "heldout"
+  },
+  {
+    "id": "p14",
+    "query": "Как отличить работающий HTTP сервер от готовой базы?",
+    "paths": [
+      "gpu_rag_server.py",
+      "ARCHITECTURE.md"
+    ],
+    "terms": [
+      "readiness"
+    ],
+    "answerable": true,
+    "split": "dev"
+  },
+  {
+    "id": "p15",
+    "query": "What prevents simultaneous local model generations?",
+    "paths": [
+      "local_inference.py",
+      "ARCHITECTURE.md"
+    ],
+    "terms": [
+      "lock"
+    ],
+    "answerable": true,
+    "split": "heldout"
+  },
+  {
+    "id": "p16",
+    "query": "Как система реагирует на удаление исходного документа?",
+    "paths": [
+      "watchdog_indexer.py",
+      "rag_engine.py",
+      "docs/knowledge-lifecycle.md"
+    ],
+    "terms": [
+      "delete"
+    ],
+    "answerable": true,
+    "split": "dev"
+  },
+  {
+    "id": "p17",
+    "query": "How does read_scope differ from write_visibility?",
+    "paths": [
+      "project_context.py",
+      "ARCHITECTURE.md",
+      "SYSTEM.md"
+    ],
+    "terms": [
+      "read_scope",
+      "write_visibility"
+    ],
+    "answerable": true,
+    "split": "heldout"
+  },
+  {
+    "id": "p18",
+    "query": "Как найти определение функции build_read_scope_sql?",
+    "paths": [
+      "rag_engine.py"
+    ],
+    "terms": [
+      "def build_read_scope_sql"
+    ],
+    "answerable": true,
+    "split": "dev"
+  },
+  {
+    "id": "p19",
+    "query": "What happens when the search worker pool is full?",
+    "paths": [
+      "gpu_rag_server.py",
+      "ARCHITECTURE.md",
+      "SYSTEM.md"
+    ],
+    "terms": [
+      "workers"
+    ],
+    "answerable": true,
+    "split": "heldout",
+    "label_note": "SYSTEM.md documents RAG_SEARCH_BUSY and occupied workers; earlier strict label missed valid ARCHITECTURE admission-slots evidence."
+  },
+  {
+    "id": "n00",
+    "query": "Какая модель квантования используется на космодроме Марс-15?",
+    "paths": [],
+    "terms": [],
+    "answerable": false,
+    "split": "dev"
+  },
+  {
+    "id": "n01",
+    "query": "Какой номер кредитной карты у автора ProjectContext?",
+    "paths": [],
+    "terms": [],
+    "answerable": false,
+    "split": "heldout"
+  },
+  {
+    "id": "n02",
+    "query": "Какой пароль от PostgreSQL у пользователя Петрова?",
+    "paths": [],
+    "terms": [],
+    "answerable": false,
+    "split": "dev"
+  },
+  {
+    "id": "n03",
+    "query": "Какой цвет автомобиля у автора agent_messages?",
+    "paths": [],
+    "terms": [],
+    "answerable": false,
+    "split": "heldout"
+  },
+  {
+    "id": "n04",
+    "query": "Who won the HNSW gardening competition yesterday?",
+    "paths": [],
+    "terms": [],
+    "answerable": false,
+    "split": "dev"
+  },
+  {
+    "id": "n05",
+    "query": "рецепт борща со свеклой и сметаной",
+    "paths": [],
+    "terms": [],
+    "answerable": false,
+    "split": "heldout"
+  },
+  {
+    "id": "n06",
+    "query": "расписание паромов на остров Сааремаа зимой",
+    "paths": [],
+    "terms": [],
+    "answerable": false,
+    "split": "dev"
+  },
+  {
+    "id": "n07",
+    "query": "What is the private bank balance of the developer of BoundedTTLCache?",
+    "paths": [],
+    "terms": [],
+    "answerable": false,
+    "split": "heldout"
+  },
+  {
+    "id": "n08",
+    "query": "Какой секретный пароль сейчас записан в secrets.env?",
+    "paths": [],
+    "terms": [],
+    "answerable": false,
+    "split": "dev"
+  },
+  {
+    "id": "n09",
+    "query": "Какая погода завтра на Марсе?",
+    "paths": [],
+    "terms": [],
+    "answerable": false,
+    "split": "heldout"
+  },
+  {
+    "id": "n10",
+    "query": "How does ProjectContext predict lottery numbers?",
+    "paths": [],
+    "terms": [],
+    "answerable": false,
+    "split": "dev"
+  },
+  {
+    "id": "n11",
+    "query": "Как настроить телепортацию через PostgreSQL?",
+    "paths": [],
+    "terms": [],
+    "answerable": false,
+    "split": "heldout"
+  },
+  {
+    "id": "u00",
+    "query": "What happens if Intel XPU is unavailable?",
+    "answerable": true,
+    "paths": [
+      "rag_engine.py",
+      "ARCHITECTURE.md",
+      "evidence_ranker.py",
+      "SYSTEM.md"
+    ],
+    "terms": [],
+    "split": "unseen"
+  },
+  {
+    "id": "u01",
+    "query": "Как обнаруживаются изменения файлов во время остановки индексатора?",
+    "answerable": true,
+    "paths": [
+      "ARCHITECTURE.md",
+      "indexer_queue.py"
+    ],
+    "terms": [],
+    "split": "unseen"
+  },
+  {
+    "id": "u02",
+    "query": "What is the passport number of the developer of ProjectContext?",
+    "answerable": false,
+    "paths": [],
+    "terms": [],
+    "split": "unseen"
+  },
+  {
+    "id": "u03",
+    "query": "Какая зарплата у автора BoundedTTLCache?",
+    "answerable": false,
+    "paths": [],
+    "terms": [],
+    "split": "unseen"
+  },
+  {
+    "id": "u04",
+    "query": "Does PostgreSQL provide the winning lottery numbers for next week?",
+    "answerable": false,
+    "paths": [],
+    "terms": [],
+    "split": "unseen"
+  }
+]

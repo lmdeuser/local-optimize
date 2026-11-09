@@ -1,0 +1,70 @@
+# Secrets and local configuration
+.env
+.env.*
+secrets.env
+secrets.env.*
+!docs/examples/secrets.env.example
+projects.json
+projects.local.json
+
+# Runtime state and logs
+.rag-index-state.json
+*.log
+*.pid
+*.lock
+*.dump
+*.coverage
+
+# Local models and dependencies (downloaded separately)
+/models/
+.venv/
+venv/
+rag-venv/
+node_modules/
+
+# Python caches and build outputs
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# Archives and local backups
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+backup/
+backups/
+
+# Local reviews, investigations and auxiliary worktrees
+artifacts/
+investigation/
+refactored-agent-skills/
+probes/
+scripts/
+deploy/systemd/
+
+# Editor, agent and machine-local state
+AGENTS.md
+.agents/
+.claude/
+.cursor/
+.vscode/
+.idea/
+.mimocode/
+opencode.json
+install_central_system_status.md
+AUDIT_BRIEF.md
+PROJECT_AUDIT.md
+GEMINI_CODE_REVIEWER_PROMPT.md
+apply_sysctl.sh
+apply_updates.sh
+antigravity-ram-manager.sh
+chrome_wrapper.sh
+mysql_move_to_raid.sh
+run_ollama.sh
+setup_network_rps.sh

@@ -1,0 +1,24 @@
+# Native Intel Arc XPU runtime for gpu-rag-server.
+# Install with: python -m pip install --no-deps -r deploy/intel-xpu-requirements.txt
+# The host must provide the Intel GPU driver and OpenCL ICD.
+--index-url https://download.pytorch.org/whl/xpu
+--extra-index-url https://pypi.org/simple
+
+torch==2.14.1+xpu
+intel-cmplr-lib-rt==2026.1.0
+intel-cmplr-lib-ur==2026.1.0
+intel-cmplr-lic-rt==2026.1.0
+intel-sycl-rt==2026.1.0
+intel-openmp==2026.1.0
+tbb==2023.1.0
+tcmlib==1.5.0
+umf==1.1.0
+intel-pti==1.0.1
+oneccl==2022.1.1
+mkl==2026.1.0
+onemkl-license==2026.1.0
+onemkl-sycl-blas==2026.1.0
+onemkl-sycl-dft==2026.1.0
+onemkl-sycl-lapack==2026.1.0
+onemkl-sycl-rng==2026.1.0
+onemkl-sycl-sparse==2026.1.0

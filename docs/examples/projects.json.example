@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "projects": [
+    {
+      "project_id": "local-optimize",
+      "project_name": "Local Optimize",
+      "roots": {
+        "primary": "/absolute/path/to/local-optimize"
+      }
+    }
+  ]
+}

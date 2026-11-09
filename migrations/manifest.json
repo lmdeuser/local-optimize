@@ -1,0 +1,721 @@
+{
+  "format_version": 1,
+  "database": "aiagent",
+  "schema": "public",
+  "migrations": [
+    {
+      "version": "baseline",
+      "filename": "0001_baseline.sql",
+      "checksum": "ff3b0a794b87aea9761c61bd6fa524e1577274613197c9e22e7ea54e5b2c2d0b",
+      "required": true,
+      "transactional": true,
+      "invariants": [
+        {
+          "type": "table",
+          "name": "schema_migrations"
+        },
+        {
+          "type": "table",
+          "name": "project_knowledge"
+        },
+        {
+          "type": "table",
+          "name": "kb_entities"
+        },
+        {
+          "type": "table",
+          "name": "kb_relations"
+        }
+      ]
+    },
+    {
+      "version": "v4",
+      "filename": "0004_multi_agent.sql",
+      "checksum": "3d5c7e88acda588e1fc54d2e4cfdf4273daae55777815177883145e41aaf74d8",
+      "required": true,
+      "transactional": true,
+      "invariants": [
+        {
+          "type": "column",
+          "table": "project_knowledge",
+          "name": "visibility"
+        },
+        {
+          "type": "table",
+          "name": "agent_sessions"
+        },
+        {
+          "type": "table",
+          "name": "agent_messages"
+        }
+      ]
+    },
+    {
+      "version": "v5",
+      "filename": "0005_universal.sql",
+      "checksum": "7027343d6b3b5f6d702f363c5e672719d875746f708bd40d710c9190fb2a6d15",
+      "required": true,
+      "transactional": true,
+      "invariants": [
+        {
+          "type": "table",
+          "name": "kb_documents"
+        },
+        {
+          "type": "column",
+          "table": "project_knowledge",
+          "name": "validation_status"
+        },
+        {
+          "type": "constraint",
+          "table": "project_knowledge",
+          "name": "project_knowledge_validation_status_check"
+        }
+      ]
+    },
+    {
+      "version": "v6",
+      "filename": "0006_stable_keys.sql",
+      "checksum": "4f1dc9b4dacd235c02bf308a7a92021e09969038c207a8f219a237ad77b42336",
+      "required": true,
+      "transactional": true,
+      "invariants": [
+        {
+          "type": "column",
+          "table": "kb_entities",
+          "name": "stable_key"
+        },
+        {
+          "type": "constraint",
+          "table": "kb_entities",
+          "name": "kb_entities_stable_key_unique"
+        }
+      ]
+    },
+    {
+      "version": "v7",
+      "filename": "0007_project_security.sql",
+      "checksum": "a20fe4074d3067da1d79adc5cc16ce3ea9f1a3bf62bf26971b3ce6db6ee99ed5",
+      "required": true,
+      "transactional": true,
+      "invariants": [
+        {
+          "type": "table",
+          "name": "knowledge_provenance"
+        },
+        {
+          "type": "table",
+          "name": "kb_feedback_logs"
+        },
+        {
+          "type": "column",
+          "table": "project_knowledge",
+          "name": "project_id"
+        },
+        {
+          "type": "column",
+          "table": "kb_relations",
+          "name": "project_id"
+        },
+        {
+          "type": "index",
+          "table": "project_knowledge",
+          "name": "project_knowledge_dedup_key_unique"
+        },
+        {
+          "type": "constraint",
+          "table": "kb_relations",
+          "name": "kb_relations_from_project_fk"
+        }
+      ]
+    },
+    {
+      "version": "v8",
+      "filename": "0008_runtime_scope_contract.sql",
+      "checksum": "9d02ea2a1f103e9ddc4562b46f2385f78126ad5fdf338e6cccc2eb41775bd2a5",
+      "required": true,
+      "transactional": true,
+      "invariants": [
+        {
+          "type": "column",
+          "table": "project_knowledge",
+          "name": "root_id"
+        },
+        {
+          "type": "column",
+          "table": "project_knowledge",
+          "name": "project_root"
+        },
+        {
+          "type": "column",
+          "table": "project_knowledge",
+          "name": "visibility"
+        },
+        {
+          "type": "column",
+          "table": "project_knowledge",
+          "name": "agent_id"
+        },
+        {
+          "type": "column",
+          "table": "project_knowledge",
+          "name": "session_id"
+        },
+        {
+          "type": "column",
+          "table": "project_knowledge",
+          "name": "source_uri"
+        },
+        {
+          "type": "column",
+          "table": "project_knowledge",
+          "name": "source_type"
+        },
+        {
+          "type": "column",
+          "table": "project_knowledge",
+          "name": "dedup_key"
+        },
+        {
+          "type": "constraint",
+          "table": "project_knowledge",
+          "name": "project_knowledge_visibility_check"
+        },
+        {
+          "type": "constraint",
+          "table": "project_knowledge",
+          "name": "project_knowledge_private_owner_check"
+        },
+        {
+          "type": "column",
+          "table": "kb_documents",
+          "name": "project_id"
+        },
+        {
+          "type": "column",
+          "table": "kb_documents",
+          "name": "root_id"
+        },
+        {
+          "type": "column",
+          "table": "kb_documents",
+          "name": "project_root"
+        },
+        {
+          "type": "column",
+          "table": "kb_entities",
+          "name": "project_id"
+        },
+        {
+          "type": "column",
+          "table": "kb_entities",
+          "name": "visibility"
+        },
+        {
+          "type": "column",
+          "table": "kb_entities",
+          "name": "agent_id"
+        },
+        {
+          "type": "column",
+          "table": "kb_entities",
+          "name": "session_id"
+        },
+        {
+          "type": "constraint",
+          "table": "kb_entities",
+          "name": "kb_entities_visibility_check"
+        },
+        {
+          "type": "constraint",
+          "table": "kb_entities",
+          "name": "kb_entities_private_owner_check"
+        },
+        {
+          "type": "column",
+          "table": "kb_relations",
+          "name": "visibility"
+        },
+        {
+          "type": "column",
+          "table": "kb_relations",
+          "name": "agent_id"
+        },
+        {
+          "type": "column",
+          "table": "kb_relations",
+          "name": "session_id"
+        },
+        {
+          "type": "constraint",
+          "table": "kb_relations",
+          "name": "kb_relations_visibility_check"
+        },
+        {
+          "type": "constraint",
+          "table": "kb_relations",
+          "name": "kb_relations_private_owner_check"
+        },
+        {
+          "type": "constraint",
+          "table": "kb_relations",
+          "name": "kb_relations_to_project_fk"
+        },
+        {
+          "type": "index",
+          "table": "kb_relations",
+          "name": "kb_relations_security_scope_idx"
+        },
+        {
+          "type": "column",
+          "table": "knowledge_provenance",
+          "name": "knowledge_id"
+        },
+        {
+          "type": "column",
+          "table": "knowledge_provenance",
+          "name": "reference_key"
+        },
+        {
+          "type": "column",
+          "table": "kb_feedback_logs",
+          "name": "project_id"
+        }
+      ]
+    },
+    {
+      "version": "v9",
+      "filename": "0009_graph_evidence_acl.sql",
+      "checksum": "0ac92f42056c1567296cff6d7d003643daa6106f38d003ed853158897bfb399c",
+      "required": true,
+      "transactional": true,
+      "invariants": [
+        {
+          "type": "index",
+          "table": "kb_relations",
+          "name": "kb_relations_id_project_unique"
+        },
+        {
+          "type": "index",
+          "table": "project_knowledge",
+          "name": "project_knowledge_id_project_root_unique"
+        },
+        {
+          "type": "index",
+          "table": "kb_documents",
+          "name": "kb_documents_id_project_root_unique"
+        },
+        {
+          "type": "index",
+          "table": "knowledge_provenance",
+          "name": "knowledge_provenance_id_project_unique"
+        },
+        {
+          "type": "table",
+          "name": "entity_evidence"
+        },
+        {
+          "type": "column",
+          "table": "entity_evidence",
+          "name": "id"
+        },
+        {
+          "type": "column",
+          "table": "entity_evidence",
+          "name": "entity_id"
+        },
+        {
+          "type": "column",
+          "table": "entity_evidence",
+          "name": "project_id"
+        },
+        {
+          "type": "column",
+          "table": "entity_evidence",
+          "name": "root_id"
+        },
+        {
+          "type": "column",
+          "table": "entity_evidence",
+          "name": "document_id"
+        },
+        {
+          "type": "column",
+          "table": "entity_evidence",
+          "name": "provenance_id"
+        },
+        {
+          "type": "column",
+          "table": "entity_evidence",
+          "name": "chunk_id"
+        },
+        {
+          "type": "column",
+          "table": "entity_evidence",
+          "name": "visibility"
+        },
+        {
+          "type": "column",
+          "table": "entity_evidence",
+          "name": "agent_id"
+        },
+        {
+          "type": "column",
+          "table": "entity_evidence",
+          "name": "session_id"
+        },
+        {
+          "type": "column",
+          "table": "entity_evidence",
+          "name": "validation_status"
+        },
+        {
+          "type": "column",
+          "table": "entity_evidence",
+          "name": "is_active"
+        },
+        {
+          "type": "column",
+          "table": "entity_evidence",
+          "name": "source_ref"
+        },
+        {
+          "type": "column",
+          "table": "entity_evidence",
+          "name": "metadata"
+        },
+        {
+          "type": "column",
+          "table": "entity_evidence",
+          "name": "created_at"
+        },
+        {
+          "type": "column",
+          "table": "entity_evidence",
+          "name": "updated_at"
+        },
+        {
+          "type": "constraint",
+          "table": "entity_evidence",
+          "name": "entity_evidence_pkey"
+        },
+        {
+          "type": "constraint",
+          "table": "entity_evidence",
+          "name": "entity_evidence_entity_project_fk"
+        },
+        {
+          "type": "constraint",
+          "table": "entity_evidence",
+          "name": "entity_evidence_document_scope_fk"
+        },
+        {
+          "type": "constraint",
+          "table": "entity_evidence",
+          "name": "entity_evidence_provenance_project_fk"
+        },
+        {
+          "type": "constraint",
+          "table": "entity_evidence",
+          "name": "entity_evidence_chunk_scope_fk"
+        },
+        {
+          "type": "constraint",
+          "table": "entity_evidence",
+          "name": "entity_evidence_project_root_check"
+        },
+        {
+          "type": "constraint",
+          "table": "entity_evidence",
+          "name": "entity_evidence_visibility_check"
+        },
+        {
+          "type": "constraint",
+          "table": "entity_evidence",
+          "name": "entity_evidence_owner_check"
+        },
+        {
+          "type": "constraint",
+          "table": "entity_evidence",
+          "name": "entity_evidence_validation_status_check"
+        },
+        {
+          "type": "index",
+          "table": "entity_evidence",
+          "name": "entity_evidence_identity_unique"
+        },
+        {
+          "type": "index",
+          "table": "entity_evidence",
+          "name": "entity_evidence_scope_idx"
+        },
+        {
+          "type": "index",
+          "table": "entity_evidence",
+          "name": "entity_evidence_source_idx"
+        },
+        {
+          "type": "table",
+          "name": "relation_evidence"
+        },
+        {
+          "type": "column",
+          "table": "relation_evidence",
+          "name": "id"
+        },
+        {
+          "type": "column",
+          "table": "relation_evidence",
+          "name": "relation_id"
+        },
+        {
+          "type": "column",
+          "table": "relation_evidence",
+          "name": "project_id"
+        },
+        {
+          "type": "column",
+          "table": "relation_evidence",
+          "name": "root_id"
+        },
+        {
+          "type": "column",
+          "table": "relation_evidence",
+          "name": "document_id"
+        },
+        {
+          "type": "column",
+          "table": "relation_evidence",
+          "name": "provenance_id"
+        },
+        {
+          "type": "column",
+          "table": "relation_evidence",
+          "name": "chunk_id"
+        },
+        {
+          "type": "column",
+          "table": "relation_evidence",
+          "name": "visibility"
+        },
+        {
+          "type": "column",
+          "table": "relation_evidence",
+          "name": "agent_id"
+        },
+        {
+          "type": "column",
+          "table": "relation_evidence",
+          "name": "session_id"
+        },
+        {
+          "type": "column",
+          "table": "relation_evidence",
+          "name": "validation_status"
+        },
+        {
+          "type": "column",
+          "table": "relation_evidence",
+          "name": "is_active"
+        },
+        {
+          "type": "column",
+          "table": "relation_evidence",
+          "name": "source_ref"
+        },
+        {
+          "type": "column",
+          "table": "relation_evidence",
+          "name": "metadata"
+        },
+        {
+          "type": "column",
+          "table": "relation_evidence",
+          "name": "created_at"
+        },
+        {
+          "type": "column",
+          "table": "relation_evidence",
+          "name": "updated_at"
+        },
+        {
+          "type": "constraint",
+          "table": "relation_evidence",
+          "name": "relation_evidence_pkey"
+        },
+        {
+          "type": "constraint",
+          "table": "relation_evidence",
+          "name": "relation_evidence_relation_project_fk"
+        },
+        {
+          "type": "constraint",
+          "table": "relation_evidence",
+          "name": "relation_evidence_document_scope_fk"
+        },
+        {
+          "type": "constraint",
+          "table": "relation_evidence",
+          "name": "relation_evidence_provenance_project_fk"
+        },
+        {
+          "type": "constraint",
+          "table": "relation_evidence",
+          "name": "relation_evidence_chunk_scope_fk"
+        },
+        {
+          "type": "constraint",
+          "table": "relation_evidence",
+          "name": "relation_evidence_project_root_check"
+        },
+        {
+          "type": "constraint",
+          "table": "relation_evidence",
+          "name": "relation_evidence_visibility_check"
+        },
+        {
+          "type": "constraint",
+          "table": "relation_evidence",
+          "name": "relation_evidence_owner_check"
+        },
+        {
+          "type": "constraint",
+          "table": "relation_evidence",
+          "name": "relation_evidence_validation_status_check"
+        },
+        {
+          "type": "index",
+          "table": "relation_evidence",
+          "name": "relation_evidence_identity_unique"
+        },
+        {
+          "type": "index",
+          "table": "relation_evidence",
+          "name": "relation_evidence_scope_idx"
+        },
+        {
+          "type": "index",
+          "table": "relation_evidence",
+          "name": "relation_evidence_source_idx"
+        }
+      ]
+    },
+    {
+      "version": "v10",
+      "filename": "0010_dedup_key_status_independent.sql",
+      "checksum": "d706a67d56aaeea75016b2e0386142b8828ea95079cf9cb2e4923b2749d55afc",
+      "required": true,
+      "transactional": true,
+      "invariants": [
+        {
+          "type": "column",
+          "table": "project_knowledge",
+          "name": "dedup_key"
+        },
+        {
+          "type": "index",
+          "table": "project_knowledge",
+          "name": "project_knowledge_dedup_key_unique"
+        }
+      ]
+    },
+    {
+      "version": "v11",
+      "filename": "0011_entity_link_integrity.sql",
+      "checksum": "aae896b784fcb114f79454f1b2dd0eb2e1208a4020616243dcd0bd15620cf0b7",
+      "required": true,
+      "transactional": true,
+      "invariants": [
+        {
+          "type": "column",
+          "table": "project_knowledge",
+          "name": "entity_id"
+        },
+        {
+          "type": "constraint",
+          "table": "project_knowledge",
+          "name": "project_knowledge_entity_scope_fk"
+        }
+      ]
+    },
+    {
+      "version": "v12",
+      "filename": "0012_verification_lifecycle.sql",
+      "checksum": "ea77cad081aa6430895168d0e01f563a448c103b3b6fa2afc164e53b9d52af48",
+      "required": true,
+      "transactional": true,
+      "invariants": [
+        {
+          "type": "column",
+          "table": "project_knowledge",
+          "name": "verified_at"
+        },
+        {
+          "type": "column",
+          "table": "project_knowledge",
+          "name": "recheck_after_days"
+        },
+        {
+          "type": "constraint",
+          "table": "project_knowledge",
+          "name": "project_knowledge_recheck_after_days_check"
+        },
+        {
+          "type": "index",
+          "table": "project_knowledge",
+          "name": "project_knowledge_recheck_idx"
+        }
+      ]
+    },
+    {
+      "version": "v13",
+      "filename": "0013_query_cache.sql",
+      "checksum": "c7edd96ed056ef144b6c46dc391c2083abce454d273b9e757a12ed025c141727",
+      "required": true,
+      "transactional": true,
+      "invariants": [
+        {
+          "type": "table",
+          "name": "rag_query_cache"
+        },
+        {
+          "type": "table",
+          "name": "rag_cache_generation"
+        },
+        {
+          "type": "index",
+          "table": "rag_query_cache",
+          "name": "rag_query_cache_key_idx"
+        },
+        {
+          "type": "index",
+          "table": "rag_query_cache",
+          "name": "rag_query_cache_semantic_idx"
+        }
+      ]
+    },
+    {
+      "version": "v14",
+      "filename": "0014_local_answer_cache.sql",
+      "checksum": "2ad7afcfbfdeab8f114ebadcdc73555f4c92298e2bef35a7d2af7a4effe98161",
+      "required": false,
+      "transactional": true,
+      "invariants": [
+        {
+          "type": "table",
+          "name": "rag_local_answer_cache"
+        },
+        {
+          "type": "index",
+          "table": "rag_local_answer_cache",
+          "name": "rag_local_answer_cache_key_idx"
+        },
+        {
+          "type": "index",
+          "table": "rag_local_answer_cache",
+          "name": "rag_local_answer_cache_expiry_idx"
+        }
+      ]
+    }
+  ]
+}

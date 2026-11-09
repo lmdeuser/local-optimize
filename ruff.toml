@@ -1,0 +1,21 @@
+target-version = "py312"
+exclude = [
+    ".agents",
+    ".claude",
+    ".cursor",
+    ".idea",
+    ".mimocode",
+    ".venv",
+    ".vscode",
+    "artifacts",
+    "backup",
+    "backups",
+    "investigation",
+    "models",
+    "node_modules",
+    "refactored-agent-skills",
+    "scripts/manual",
+]
+
+[lint]
+select = ["F"]

@@ -1,0 +1,9 @@
+-r deploy/intel-xpu-requirements.txt
+sentence-transformers>=3.0
+numpy>=1.26
+psycopg2-binary>=2.9
+fastapi>=0.111
+uvicorn[standard]>=0.29
+transformers==5.14.1
+watchdog>=4.0
+mcp>=1.0
