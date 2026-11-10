@@ -2,6 +2,9 @@
 import asyncio
 import fcntl
 import json
+import os
+import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,6 +14,20 @@ import pytest
 import local_inference as inference
 
 pytestmark = pytest.mark.unit
+
+
+def test_lock_path_honours_explicit_state_directory(tmp_path):
+    env = os.environ.copy()
+    env["LOCAL_OPTIMIZE_STATE_DIR"] = str(tmp_path)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    result = subprocess.run(
+        [sys.executable, "-c", "import local_inference; print(local_inference.LOCK_PATH)"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == str(tmp_path / "inference.lock")
 
 
 @pytest.fixture

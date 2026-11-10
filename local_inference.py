@@ -7,6 +7,7 @@ import fcntl
 import http.client
 import json
 import logging
+import os
 import socket
 import threading
 import time
@@ -21,7 +22,8 @@ P = ParamSpec("P")
 T = TypeVar("T")
 _cancel: contextvars.ContextVar[threading.Event | None] = contextvars.ContextVar("inference_cancel", default=None)
 _request_id: contextvars.ContextVar[str] = contextvars.ContextVar("inference_request_id", default="")
-LOCK_PATH = Path(__file__).resolve().parent / "artifacts" / "runtime" / "inference.lock"
+_STATE_HOME = Path(os.getenv("XDG_STATE_HOME", str(Path.home() / ".local" / "state")))
+LOCK_PATH = Path(os.getenv("LOCAL_OPTIMIZE_STATE_DIR", str(_STATE_HOME / "local-optimize"))) / "inference.lock"
 
 
 def correlation_id(value: str | None = None) -> str:
