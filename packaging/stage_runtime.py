@@ -74,6 +74,13 @@ def relocate_venv(venv: Path, installed_venv: Path) -> None:
         except UnicodeDecodeError as exc:
             raise RuntimeError(f"Build path remains in binary file {item}") from exc
         item.write_bytes(raw.replace(old_prefix, new_prefix))
+    for item in venv.rglob("*.py"):
+        with item.open("rb") as stream:
+            prefix = stream.read(32)
+        if prefix.startswith(b"#!/usr/bin/env/python3"):
+            raw = item.read_bytes()
+            item.write_bytes(raw.replace(b"#!/usr/bin/env/python3", b"#!/usr/bin/env python3", 1))
+    (venv / ".gitignore").unlink(missing_ok=True)
     config = venv / "pyvenv.cfg"
     lines = config.read_text(encoding="utf-8").splitlines()
     config.write_text(
