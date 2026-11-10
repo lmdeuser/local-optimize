@@ -1,0 +1,26 @@
+#!/bin/sh
+set -e
+
+#DEBHELPER#
+
+if getent passwd ollama >/dev/null 2>&1; then
+    dpkg-query -L local-optimize | while IFS= read -r path; do
+        case "$path" in
+            /usr/share/ollama/.ollama/models/*)
+                if [ -e "$path" ] || [ -L "$path" ]; then
+                    chown -h ollama:ollama "$path"
+                fi
+                ;;
+        esac
+    done
+fi
+
+for unit in gpu-rag-server.service watchdog-indexer.service; do
+    link="/etc/systemd/user/default.target.wants/$unit"
+    target="/usr/lib/systemd/user/$unit"
+    if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then
+        rm -f "$link"
+    fi
+done
+
+exit 0

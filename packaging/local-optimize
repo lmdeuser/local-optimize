@@ -19,7 +19,7 @@ Commands:
   help           Print this help
 
 The Python environment is read from LOCAL_OPTIMIZE_VENV or
-~/.local/share/local-optimize/venv.
+/usr/lib/local-optimize/venv.
 EOF
 }
 
@@ -41,12 +41,11 @@ case "$command" in
         ;;
 esac
 
-DATA_HOME=${XDG_DATA_HOME:-${HOME:?HOME must be set}/.local/share}
-VENV=${LOCAL_OPTIMIZE_VENV:-$DATA_HOME/local-optimize/venv}
+VENV=${LOCAL_OPTIMIZE_VENV:-$APP_ROOT/venv}
 PYTHON=$VENV/bin/python
 if [ ! -x "$PYTHON" ]; then
-    printf '%s\n' "Python environment not found: $PYTHON" >&2
-    printf '%s\n' 'See /usr/share/doc/local-optimize/README.Debian for setup.' >&2
+    printf '%s\n' "Packaged Python environment not found: $PYTHON" >&2
+    printf '%s\n' 'Reinstall local-optimize or see /usr/share/doc/local-optimize/README.Debian.' >&2
     exit 1
 fi
 

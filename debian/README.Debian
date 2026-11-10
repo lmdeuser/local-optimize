@@ -1,40 +1,42 @@
 Local Optimize on Debian/Ubuntu
 ================================
 
-The package installs application code in /usr/lib/local-optimize, the
-/usr/bin/local-optimize CLI and inactive systemd user units. It does not
-create databases, secrets, model directories, virtual environments or agent
-configuration, and it does not enable or start services.
+The Ubuntu 26.04/amd64 package installs application code, a relocatable
+Python 3.14 Intel XPU environment, pinned E5/Qwen models and the pinned
+qwen2.5-coder:7b manifest/blobs. Installation does not run pip or download
+models. Runtime files are installed on the root filesystem under
+/usr/lib/local-optimize and /usr/share/ollama; use an SSD for that filesystem.
 
-Create a per-user Python environment after installing the package:
+Prerequisites are an Intel GPU driver/OpenCL ICD, PostgreSQL 18 with pgvector,
+and an installed Ollama binary/service with the ollama system user and the
+standard /usr/share/ollama/.ollama/models store. PostgreSQL and pgvector are
+package dependencies. Ollama is checked by preinst because this host installs
+it outside dpkg.
 
-  python3 -m venv ~/.local/share/local-optimize/venv
-  ~/.local/share/local-optimize/venv/bin/python -m pip install --upgrade pip
-  ~/.local/share/local-optimize/venv/bin/python -m pip install --no-deps \
-    -r /usr/lib/local-optimize/deploy/intel-xpu-requirements.txt
-  ~/.local/share/local-optimize/venv/bin/python -m pip install \
-    -r /usr/lib/local-optimize/requirements.txt
-
-Install the model snapshots and Ollama model, create the PostgreSQL database
-and ~/.config/local-optimize/secrets.env as described in
-/usr/share/doc/local-optimize/docs/installation.md. Replace repository paths
-in that guide with /usr/lib/local-optimize where appropriate.
+Configure ~/.config/local-optimize/secrets.env and projects.json as described
+in /usr/share/doc/local-optimize/docs/installation.md. Package installation
+cannot safely invent database credentials or bearer tokens. Keep real secrets
+out of the repository.
 
 Commands:
 
-  local-optimize migrate        Apply database migrations
+  local-optimize migrate        Apply PostgreSQL migrations
   local-optimize server         Run the FastAPI server
   local-optimize watchdog       Run filesystem indexing
   local-optimize mcp            Run the full local-only MCP server
   local-optimize lmstudio-mcp   Run the read-only LM Studio wrapper
   local-optimize index          Index the registered project
 
-LOCAL_OPTIMIZE_VENV can override ~/.local/share/local-optimize/venv.
+LOCAL_OPTIMIZE_VENV can override /usr/lib/local-optimize/venv for development.
 LOCAL_OPTIMIZE_ROOT can override /usr/lib/local-optimize for packaging checks.
 
-The user units are templates only:
+The user units are installed but not globally enabled. After configuration,
+apply migrations and check the server, then enable them for the intended user:
 
+  local-optimize migrate
   systemctl --user enable --now gpu-rag-server.service watchdog-indexer.service
 
-Enable them only after completing runtime setup and health checks. Agent
-installation and migration to a new engine are intentionally separate tasks.
+Verify /liveness, /readiness and /runtime before registering local-only agents.
+Cloud-capable clients must not receive direct RAG MCP access. Existing allowed
+agent entries should use /usr/bin/local-optimize mcp (or lmstudio-mcp for the
+isolated LM Studio wrapper).

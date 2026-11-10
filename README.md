@@ -24,6 +24,12 @@ MCP tool → RagClient → FastAPI → RagEngine → PostgreSQL/pgvector
                          Ollama или безопасный routing signal
 ```
 
+## Готовый DEB для Ubuntu 26.04
+
+Для Ubuntu 26.04/amd64 используйте пакет из `docs/packaging.md`. Он содержит Python 3.14/XPU-окружение, E5, Qwen reranker и `qwen2.5-coder:7b`; после установки не нужны `pip`, создание venv или скачивание моделей. Секреты и реестр проектов настраиваются отдельно. Runtime устанавливается в системные каталоги корневой файловой системы, которую следует размещать на SSD.
+
+Ниже описана ручная установка для разработки.
+
 ## Требования
 
 - Linux с поддерживаемым Intel Arc/XPU-драйвером и OpenCL ICD.

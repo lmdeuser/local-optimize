@@ -1,9 +1,9 @@
 <project name="home:dwolfF:local-optimize">
   <title>Local Optimize</title>
-  <description>Local-first MCP/RAG memory with PostgreSQL, Intel XPU and Ollama. Agent installation and migration are intentionally separate.</description>
+  <description>Self-contained local-first MCP/RAG memory for Ubuntu 26.04, with Python Intel XPU runtime and pinned models. Secrets and agent migration remain separate.</description>
   <person userid="dwolfF" role="maintainer"/>
-  <repository name="xUbuntu_24.04">
-    <path project="Ubuntu:24.04" repository="standard"/>
+  <repository name="xUbuntu_26.04">
+    <path project="Ubuntu:26.04" repository="standard"/>
     <arch>x86_64</arch>
   </repository>
 </project>

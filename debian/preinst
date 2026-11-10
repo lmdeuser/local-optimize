@@ -1,0 +1,18 @@
+#!/bin/sh
+set -e
+
+if [ ! -x /usr/local/bin/ollama ] && [ ! -x /usr/bin/ollama ]; then
+    echo 'local-optimize requires an installed Ollama binary and service.' >&2
+    exit 1
+fi
+if ! getent passwd ollama >/dev/null 2>&1; then
+    echo 'local-optimize requires the ollama system user.' >&2
+    exit 1
+fi
+if [ ! -d /usr/share/ollama/.ollama/models ]; then
+    echo 'Ollama model store is missing: /usr/share/ollama/.ollama/models' >&2
+    exit 1
+fi
+
+#DEBHELPER#
+exit 0

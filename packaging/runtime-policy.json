@@ -1,0 +1,33 @@
+{
+  "python": "3.14",
+  "install_root": "/usr/lib/local-optimize",
+  "models": {
+    "multilingual-e5-small": {
+      "repository": "intfloat/multilingual-e5-small",
+      "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+      "required_files": [
+        "config.json",
+        "model.safetensors",
+        "modules.json",
+        "sentencepiece.bpe.model",
+        "tokenizer.json"
+      ]
+    },
+    "Qwen3-Reranker-0.6B": {
+      "repository": "Qwen/Qwen3-Reranker-0.6B",
+      "revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473",
+      "required_files": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json"
+      ]
+    }
+  },
+  "ollama": {
+    "model": "qwen2.5-coder:7b",
+    "repository": "library/qwen2.5-coder",
+    "tag": "7b",
+    "manifest_sha256": "dae161e27b0e90dd1856c8bb3209201fd6736d8eb66298e75ed87571486f4364"
+  }
+}
