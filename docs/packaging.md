@@ -25,7 +25,7 @@ lintian artifacts/debian/local-optimize_1.0.0-2_amd64.deb
 
 Скрипт копирует только tracked-файлы, создаёт venv и скачивает/копирует модели в изолированный каталог `artifacts/deb-build.*`. `TMPDIR` и pip cache по умолчанию находятся там же и удаляются после сборки. Можно заранее задать `PIP_CACHE_DIR` и `OLLAMA_MODELS_SOURCE` для повторного использования проверенных входов. `packaging/runtime-policy.json` фиксирует revisions и digest; `runtime/manifest.json` в пакете содержит SHA-256 payload.
 
-Результат включает `_amd64.deb`, `.dsc`, orig tar с готовым runtime и Debian tar. Локальные секреты, Git-игнорируемые заметки и произвольные untracked-файлы в пакет не попадают. Ожидаемый размер source/binary artifacts — порядка 8–12 ГБ.
+Результат включает `_amd64.deb`, `.dsc`, основной orig tar, несколько `orig-runtime-*.tar.gz` и Debian tar. Компоненты ограничены 512 МиБ до сжатия; большие файлы разбиваются и собираются с проверкой SHA-256 на этапе сборки. Это позволяет OBS принимать payload отдельными запросами вместо одного архива 7,8 ГБ. Локальные секреты, Git-игнорируемые заметки и произвольные untracked-файлы в пакет не попадают. Для публикации используйте `SOURCE_ONLY=1 packaging/build-deb.sh`, чтобы бинарный DEB собирал OBS.
 
 ## Установка DEB
 

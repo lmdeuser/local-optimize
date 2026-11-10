@@ -41,9 +41,16 @@ mkdir -p "$WORK/original/$PACKAGE-$UPSTREAM_VERSION"
 cp -a "$WORK/source/." "$WORK/original/$PACKAGE-$UPSTREAM_VERSION/"
 rm -rf "$WORK/original/$PACKAGE-$UPSTREAM_VERSION/debian" \
        "$WORK/original/$PACKAGE-$UPSTREAM_VERSION/artifacts" \
-       "$WORK/original/$PACKAGE-$UPSTREAM_VERSION/models"
-tar -C "$WORK/original" -czf "$WORK/${PACKAGE}_${UPSTREAM_VERSION}.orig.tar.gz" \
-    "$PACKAGE-$UPSTREAM_VERSION"
+       "$WORK/original/$PACKAGE-$UPSTREAM_VERSION/models" \
+       "$WORK/original/$PACKAGE-$UPSTREAM_VERSION/runtime/venv" \
+       "$WORK/original/$PACKAGE-$UPSTREAM_VERSION/runtime/models" \
+       "$WORK/original/$PACKAGE-$UPSTREAM_VERSION/runtime/ollama-models"
+python3 "$ROOT/packaging/payload_components.py" pack \
+    --source-root "$WORK/source" \
+    --main-root "$WORK/original/$PACKAGE-$UPSTREAM_VERSION" \
+    --package "$PACKAGE" \
+    --version "$UPSTREAM_VERSION" \
+    --output-dir "$WORK"
 
 cd "$WORK/source"
 if [[ ${SOURCE_ONLY:-0} == 1 ]]; then

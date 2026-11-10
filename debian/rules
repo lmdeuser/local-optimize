@@ -3,6 +3,9 @@
 %:
 	dh $@
 
+override_dh_auto_configure:
+	python3 packaging/payload_components.py assemble --source-root .
+
 override_dh_auto_test:
 	PYTHONPYCACHEPREFIX=$(CURDIR)/debian/.pycache python3 -m compileall -q .
 	rm -rf $(CURDIR)/debian/.pycache
