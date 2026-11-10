@@ -13,17 +13,17 @@ The package contains compiled Python 3.14/XPU dependencies and pinned models. It
 From the Git repository root:
 
 ```bash
-packaging/build-deb.sh
-lintian artifacts/debian/local-optimize_1.0.0-2_amd64.deb
+SOURCE_ONLY=1 packaging/build-deb.sh
 ```
 
-The script copies only tracked source files, then creates the complete runtime in a temporary build directory. Outputs in `artifacts/debian/` include:
+The script copies only tracked source files, then creates the complete runtime in a temporary build directory. `SOURCE_ONLY=1` avoids a redundant local binary build; OBS builds the `.deb` on its workers. Outputs in `artifacts/debian/` include:
 
-- `local-optimize_1.0.0-2_amd64.deb`
 - `local-optimize_1.0.0.orig.tar.gz`
 - `local-optimize_1.0.0-2.dsc`
 - `local-optimize_1.0.0-2.debian.tar.xz`
-- build information and changes files
+- source changes files
+
+For a separate local binary verification run `packaging/build-deb.sh` without `SOURCE_ONLY` and then `lintian artifacts/debian/local-optimize_1.0.0-2_amd64.deb`.
 
 The orig tar intentionally contains the generated venv and pinned model payload, so these artifacts are large. Upload only the source tarball, Debian tarball and `.dsc` for an OBS source build. Never upload secrets, agent configuration or unrelated local artifacts.
 

@@ -46,7 +46,11 @@ tar -C "$WORK/original" -czf "$WORK/${PACKAGE}_${UPSTREAM_VERSION}.orig.tar.gz" 
     "$PACKAGE-$UPSTREAM_VERSION"
 
 cd "$WORK/source"
-dpkg-buildpackage --no-sign
+if [[ ${SOURCE_ONLY:-0} == 1 ]]; then
+    dpkg-buildpackage --no-sign -S
+else
+    dpkg-buildpackage --no-sign
+fi
 
 for artifact in "$WORK"/local-optimize_*; do
     if [[ -f "$artifact" ]]; then
