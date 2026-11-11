@@ -51,6 +51,9 @@ python3 "$ROOT/packaging/payload_components.py" pack \
     --package "$PACKAGE" \
     --version "$UPSTREAM_VERSION" \
     --output-dir "$WORK"
+rm -rf "$WORK/source/runtime/venv" \
+       "$WORK/source/runtime/models" \
+       "$WORK/source/runtime/ollama-models"
 
 cd "$WORK/source"
 if [[ ${SOURCE_ONLY:-0} == 1 ]]; then
