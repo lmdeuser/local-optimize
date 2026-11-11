@@ -105,49 +105,51 @@ class IndexQueue:
             for path in missing:
                 self.enqueue("delete", path)
 
+    def process_next(self):
+        with self.condition:
+            if self.stopping or not self.pending:
+                return False
+            path, entry = min(self.pending.items(), key=lambda item: item[1][0])
+            due, action, destination, attempt = entry
+            if due > time.monotonic():
+                return False
+            del self.pending[path]
+        try:
+            before = self.fingerprint(path)
+            success = self.process(action, path, destination)
+            if not success or before != self.fingerprint(path):
+                if attempt < 2:
+                    self.enqueue(action, path, destination, attempt=attempt + 1)
+                return True
+            with self.condition:
+                updated = dict(self.confirmed)
+                if before is None or action == "move":
+                    updated.pop(path, None)
+                else:
+                    updated[path] = before
+                payload = json.dumps({"version": 1, "root": str(self.root), "files": updated})
+            temporary = self.state_path.with_suffix(".pending")
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "w") as stream:
+                stream.write(payload)
+            os.replace(temporary, self.state_path)
+            with self.condition:
+                self.confirmed = updated
+            if action == "move" and destination:
+                self.enqueue("modify", destination)
+                if before is not None:
+                    self.enqueue("modify", path)
+        except Exception:
+            if attempt < 2:
+                self.enqueue(action, path, destination, attempt=attempt + 1)
+        return True
+
     def _run(self):
         while True:
             with self.condition:
                 if self.stopping:
                     return
-                if not self.pending:
-                    self.condition.wait()
-                    continue
-                path, entry = min(self.pending.items(), key=lambda item: item[1][0])
-                due, action, destination, attempt = entry
-                delay = due - time.monotonic()
-                if delay > 0:
-                    self.condition.wait(delay)
-                    continue
-                del self.pending[path]
-            try:
-                before = self.fingerprint(path)
-                success = self.process(action, path, destination)
-                if not success or before != self.fingerprint(path):
-                    if attempt < 2:
-                        self.enqueue(action, path, destination, attempt=attempt + 1)
-                    continue
+            if not self.process_next():
                 with self.condition:
-                    updated = dict(self.confirmed)
-                    if before is None or action == "move":
-                        updated.pop(path, None)
-                    else:
-                        updated[path] = before
-                    payload = json.dumps({"version": 1, "root": str(self.root), "files": updated})
-                temporary = self.state_path.with_suffix(".pending")
-                # Private, atomic output; never follow an injected state-file symlink.
-                fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-                with os.fdopen(fd, "w") as stream:
-                    stream.write(payload)
-                os.replace(temporary, self.state_path)
-                with self.condition:
-                    self.confirmed = updated
-                if action == "move" and destination:
-                    self.enqueue("modify", destination)
-                    if before is not None:
-                        self.enqueue("modify", path)
-            except Exception:
-                # A failed operation is not acknowledged. A later metadata scan
-                # retries it, with no tight loop and no source contents in logs.
-                if attempt < 2:
-                    self.enqueue(action, path, destination, attempt=attempt + 1)
+                    if not self.stopping:
+                        self.condition.wait(0.2)

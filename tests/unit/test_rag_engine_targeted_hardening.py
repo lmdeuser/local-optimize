@@ -8,10 +8,16 @@ import pytest
 
 import rag_engine
 from tests.similarity_reference import ReferenceReranker
-from project_context import ProjectContext, ReadScope, WriteVisibility
+from project_context import ProjectContext, ProjectDefinition, ProjectRegistry, ReadScope, WriteVisibility
 
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def registered_test_context(monkeypatch, tmp_path):
+    registry = ProjectRegistry([ProjectDefinition("project-a", "Project A", {"root-a": tmp_path})])
+    monkeypatch.setattr(rag_engine, "get_project_registry", lambda _settings: registry)
 
 
 def make_context(tmp_path, *, visibility=WriteVisibility.SESSION_PRIVATE):
@@ -180,7 +186,7 @@ class SearchCursor:
             self.rows = [(
                 1, "content", {}, [1.0, 0.0], "hash", 1.0, None, None, "uri",
                 "code", "validated", None, "0", "1", "local", "", "", "shared", 77,
-                "docs/socket.cpp", 42, "/project/docs/socket.cpp", "code",
+                "docs/socket.cpp", 42, "/project/docs/socket.cpp", "code", "project-a", "root-a",
             )]
 
     def fetchall(self):

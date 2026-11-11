@@ -55,7 +55,7 @@ def test_versioned_registry_has_stable_fingerprint_and_rejects_mismatch(tmp_path
         ProjectRegistry.from_file(registry_file)
 
 
-def test_registry_loader_is_singleton_and_fallback_is_explicit(tmp_path):
+def test_registry_loader_is_singleton_and_missing_file_has_no_fallback(tmp_path):
     root = tmp_path / "builtin"
     root.mkdir()
     settings = SimpleNamespace(
@@ -63,16 +63,18 @@ def test_registry_loader_is_singleton_and_fallback_is_explicit(tmp_path):
         project_root=root,
         allowed_index_roots=[root],
     )
-    assert get_project_registry(settings) is get_project_registry(settings)
-    context = get_project_registry(settings).resolve(
-        project_id="builtin",
-        root_id="primary",
-        write_visibility="session-private",
-        read_scope="session",
-        agent_id="server-agent",
-        session_id="server-session",
-    )
-    assert context.project_root == str(root.resolve())
+    registry = get_project_registry(settings)
+    assert registry is get_project_registry(settings)
+    assert registry.project_ids == ()
+    with pytest.raises(ValueError, match="Unknown project_id"):
+        registry.resolve(
+            project_id="builtin",
+            root_id="primary",
+            write_visibility="session-private",
+            read_scope="session",
+            agent_id="server-agent",
+            session_id="server-session",
+        )
 
 
 def test_registry_requires_existing_directory_and_fails_closed_on_hint(tmp_path):

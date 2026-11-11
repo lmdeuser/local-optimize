@@ -929,7 +929,7 @@ class RagEngine:
         conn = self._get_conn()
         error = False
         try:
-            current = verify_runtime_schema(conn)
+            current = verify_runtime_schema(conn, expected_database=settings.db_name)
             conn.rollback()
             return current
         except Exception:
@@ -1854,9 +1854,13 @@ class RagEngine:
         Индексация скилов: парсит Markdown-файл системных скилов/инструкций,
         сохраняет его в kb_entities в типе 'system_guideline' и векторизует в project_knowledge.
         """
-        if not os.path.exists(file_path):
-            return {"status": "error", "message": f"Путь не найден: {file_path}"}
-            
+        if not isinstance(context, ProjectContext):
+            raise TypeError("index_skill requires ProjectContext")
+        try:
+            file_path = str(self._validate_owned_path(context, file_path))
+        except ValueError as exc:
+            return {"status": "error", "error": {"code": "INDEX_PATH_REJECTED", "message": str(exc)}}
+
         file_name = os.path.basename(file_path)
         try:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -2078,6 +2082,14 @@ class RagEngine:
 
         return [chunk for chunk in chunks if chunk]
 
+    @staticmethod
+    def _validate_owned_path(context: ProjectContext, file_path: str | Path) -> Path:
+        path = context.validate_path(file_path, must_exist=True)
+        owner = get_project_registry(settings).owner_for_path(path, must_exist=True)
+        if (owner.project_id, owner.root_id) != (context.project_id, context.root_id):
+            raise ValueError("Path belongs to a more specific registered root")
+        return path
+
     def _validate_index_file(
         self,
         context: ProjectContext,
@@ -2089,7 +2101,7 @@ class RagEngine:
         if not requested.is_absolute():
             requested = Path(context.project_root) / requested
         try:
-            path = context.validate_path(file_path, must_exist=True)
+            path = self._validate_owned_path(context, file_path)
             if requested.is_symlink():
                 raise ValueError("Symbolic links are not indexable")
             if not path.is_file():
@@ -2289,7 +2301,7 @@ class RagEngine:
         if not requested.is_absolute():
             requested = Path(context.project_root) / requested
         try:
-            canonical_path = context.validate_path(file_path, must_exist=True)
+            canonical_path = self._validate_owned_path(context, file_path)
         except ValueError as exc:
             return {"status": "error", "error": {"code": "INDEX_PATH_REJECTED", "message": str(exc)}}
         if requested.is_symlink():
@@ -3631,10 +3643,9 @@ class RagEngine:
 
         Deliberately excluded, because plain search does not read them:
         write_visibility and validation_status (write-side concerns), root_id,
-        language, and the human-readable project name and roots. The registry
-        fingerprint stays: it is constant per deployment, so it costs no
-        fragmentation, and it stops rows computed under a different project
-        registry from being served after that registry changes.
+        language, and the human-readable project name. The scoped fingerprint
+        covers the visible project roots and nested exclusions, so unrelated
+        registrations share cache entries while ownership changes cannot reuse them.
         """
         scope = context.read_scope
         identifies_agent = scope in (ReadScope.AGENT, ReadScope.SESSION)
@@ -3647,7 +3658,7 @@ class RagEngine:
             tuple(context.source_types or ()),
             float(context.min_score),
             bool(context.include_metadata),
-            context.registry_fingerprint,
+            context.context_fingerprint,
             int(limit),
             "search",
             EMBEDDING_MODEL_NAME,
@@ -3714,16 +3725,44 @@ class RagEngine:
     def _check_source_versions(project_id: str, result: dict) -> dict:
         if result.get("status") != "success":
             return result
-        hits = result.get("results", [])
-        roots = get_project_registry(settings).roots_for(project_id) if any(
-            (h.get("metadata") or {}).get("source_snapshot") for h in hits
-        ) else ()
-        accepted, rejected = prepare_evidence(hits, roots)
+        registry = get_project_registry(settings)
+        eligible = []
+        ownership_rejected = 0
+        for hit in result.get("results", []):
+            item = dict(hit)
+            item.setdefault("project_id", project_id)
+            raw_source = str(item.get("source_uri") or item.get("file_path") or "")
+            source_path = Path(raw_source)
+            if source_path.is_absolute():
+                try:
+                    owner = registry.owner_for_path(source_path)
+                except (OSError, ValueError):
+                    ownership_rejected += 1
+                    continue
+                stored_root = str(item.get("root_id") or "")
+                if owner.project_id != item["project_id"] or (
+                    stored_root and owner.root_id != stored_root
+                ):
+                    ownership_rejected += 1
+                    continue
+                item["root_id"] = owner.root_id
+            eligible.append(item)
+        try:
+            roots = registry.roots_for(project_id) if any(
+                (h.get("metadata") or {}).get("source_snapshot") for h in eligible
+            ) else ()
+        except ValueError:
+            roots = ()
+        accepted, rejected = prepare_evidence(eligible, roots)
+        rejected += ownership_rejected
         result = dict(result, results=accepted)
         if rejected:
-            result.update(unusable_sources_omitted=rejected, reason="source_unavailable",
-                          top_score=accepted[0]["final_score"] if accepted else 0.0,
-                          evidence_coverage=0.0)
+            result.update(
+                unusable_sources_omitted=rejected,
+                reason="ownership_changed" if ownership_rejected else "source_unavailable",
+                top_score=accepted[0]["final_score"] if accepted else 0.0,
+                evidence_coverage=0.0,
+            )
         return result
 
     def _search_via_persistent_cache(
@@ -3881,7 +3920,8 @@ class RagEngine:
                                COALESCE(NULLIF(prov.prov_file_path, ''), NULLIF(pk.file_path, ''), '') AS file_path,
                                COALESCE(prov.prov_document_id, pk.document_id) AS resolved_document_id,
                                COALESCE(NULLIF(prov.prov_source_uri, ''), NULLIF(pk.source_uri, ''), NULLIF(pk.file_path, ''), 'unknown') AS resolved_source_uri,
-                               COALESCE(NULLIF(prov.prov_source_type, ''), pk.source_type) AS resolved_source_type
+                               COALESCE(NULLIF(prov.prov_source_type, ''), pk.source_type) AS resolved_source_type,
+                               pk.project_id, pk.root_id
                         FROM public.project_knowledge AS pk
                         LEFT JOIN LATERAL (
                             SELECT document_id AS prov_document_id,
@@ -3925,7 +3965,8 @@ class RagEngine:
                                COALESCE(NULLIF(prov.prov_file_path, ''), NULLIF(pk.file_path, ''), '') AS file_path,
                                COALESCE(prov.prov_document_id, pk.document_id) AS resolved_document_id,
                                COALESCE(NULLIF(prov.prov_source_uri, ''), NULLIF(pk.source_uri, ''), NULLIF(pk.file_path, ''), 'unknown') AS resolved_source_uri,
-                               COALESCE(NULLIF(prov.prov_source_type, ''), pk.source_type) AS resolved_source_type
+                               COALESCE(NULLIF(prov.prov_source_type, ''), pk.source_type) AS resolved_source_type,
+                               pk.project_id, pk.root_id
                         FROM public.project_knowledge AS pk
                         LEFT JOIN LATERAL (
                             SELECT document_id AS prov_document_id,
@@ -3971,9 +4012,9 @@ class RagEngine:
                 """
                 for rank, row in enumerate(candidates):
                     if is_fts:
-                        cid, content, meta, emb_str, content_hash, created_ts, verified_ts, recheck_days, lex_rank, s_uri, s_type, val_status, doc_id, s_loc, e_loc, emb_model, ag_id, sess_id, vis, entity_id, file_path, resolved_doc_id, resolved_source_uri, resolved_source_type = row
+                        cid, content, meta, emb_str, content_hash, created_ts, verified_ts, recheck_days, lex_rank, s_uri, s_type, val_status, doc_id, s_loc, e_loc, emb_model, ag_id, sess_id, vis, entity_id, file_path, resolved_doc_id, resolved_source_uri, resolved_source_type, stored_project_id, stored_root_id = row
                     else:
-                        cid, content, meta, emb_str, content_hash, created_ts, verified_ts, recheck_days, s_uri, s_type, val_status, doc_id, s_loc, e_loc, emb_model, ag_id, sess_id, vis, entity_id, file_path, resolved_doc_id, resolved_source_uri, resolved_source_type = row
+                        cid, content, meta, emb_str, content_hash, created_ts, verified_ts, recheck_days, s_uri, s_type, val_status, doc_id, s_loc, e_loc, emb_model, ag_id, sess_id, vis, entity_id, file_path, resolved_doc_id, resolved_source_uri, resolved_source_type, stored_project_id, stored_root_id = row
                         lex_rank = 0.0
 
                     # content_hash is server-provided; the local digest is only an
@@ -4001,6 +4042,8 @@ class RagEngine:
                             "verified_ts": float(verified_ts) if verified_ts is not None else None,
                             "recheck_after_days": int(recheck_days) if recheck_days else None,
                             "source_uri": resolved_source_uri or s_uri or "unknown",
+                            "project_id": stored_project_id,
+                            "root_id": stored_root_id or "",
                             "source_type": resolved_source_type or s_type or "code",
                             "file_path": file_path or "",
                             "validation_status": val_status or "unverified",
@@ -4108,6 +4151,8 @@ class RagEngine:
                     "content": contents[i],
                     "metadata": metas[i],
                     "source_uri": items[i]["source_uri"],
+                    "project_id": items[i]["project_id"],
+                    "root_id": items[i]["root_id"],
                     "source_type": items[i]["source_type"],
                     "content_hash": items[i]["content_hash"],
                     "score_components": {
@@ -4499,6 +4544,7 @@ def main():
     engine = None
     context = build_default_project_context(
         settings,
+        working_directory=os.getcwd(),
         agent_id="rag-engine-cli",
         session_id=f"cli-{os.getpid()}",
         write_visibility="session-private",

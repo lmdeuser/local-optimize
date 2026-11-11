@@ -94,7 +94,7 @@ class FreshnessCursor:
         self.rows = [(
             1, "content", {}, [1.0, 0.0], "hash", created_ts, verified_ts,
             recheck_days, "uri", "code", "unverified", None, "0", "1", "local",
-            "", "", "shared", None, "fixture.py", None, "uri", "code",
+            "", "", "shared", None, "fixture.py", None, "uri", "code", "project-a", "root-a",
         )]
 
     def fetchall(self):

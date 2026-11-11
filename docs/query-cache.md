@@ -82,6 +82,18 @@ but cannot recognize as its own.
 may depend on. Adding a filter to `_search_uncached` without extending the scope
 key is how this cache would turn into a data leak rather than a slowdown.
 
+The key also contains the scoped `context_fingerprint`, not a whole-registry
+fingerprint. It hashes the visible project roots and separately registered nested
+exclusions. An unrelated project does not fragment existing entries. Adding,
+moving or removing a nested root changes the parent's visible area and therefore
+both its search-cache and local-answer-cache keys. File ownership is checked again
+on every result, including L1/L2 hits, so older misattributed rows are omitted.
+Rootless notes remain subject to project, ACL and generation partitioning.
+
+Explicit global search has no combined cross-project answer cache. It reuses these
+independent per-project caches after resolving each current project scope, and
+returns project provenance plus per-project cache details.
+
 ## Invalidation
 
 `rag_cache_generation` holds one counter per project. Any successful knowledge

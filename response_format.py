@@ -92,11 +92,20 @@ def _truncate(text: str, max_chars: int) -> str:
     return text[:max_chars].rstrip() + TRUNCATION_MARKER
 
 
+def _origin(hit: dict) -> dict:
+    return {
+        field: hit[field]
+        for field in ("project_id", "project_name", "root_id")
+        if hit.get(field)
+    }
+
+
 def compact_hit(hit: dict, *, max_content_chars: int = 0) -> dict:
     compact: dict[str, Any] = {
         "id": hit.get("chunk_id"),
         "score": round(float(hit.get("final_score") or hit.get("score") or 0.0), 3),
         "src": _source_label(hit),
+        **_origin(hit),
     }
     status = hit.get("validation_status")
     if status:
@@ -178,7 +187,8 @@ def compact_search_response(
     if isinstance(response.get("cache"), dict):
         compact["cache"] = response["cache"]
     for field in ("budget_tokens", "tokens_used", "agent_tier", "route", "correlation",
-                  "reason", "score_kind", "unusable_sources_omitted"):
+                  "reason", "score_kind", "unusable_sources_omitted", "partial",
+                  "completed_project_ids", "omitted_project_ids"):
         if field in response:
             compact[field] = response[field]
 
@@ -188,6 +198,7 @@ def compact_search_response(
                 "id": hit.get("chunk_id"),
                 "score": round(float(hit.get("final_score") or hit.get("score") or 0.0), 3),
                 "src": _source_label(hit),
+                **_origin(hit),
             }
             for hit in hits
         ]

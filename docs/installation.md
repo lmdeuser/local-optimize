@@ -101,7 +101,7 @@ Bearer-токен и SSL-пути редактируются непосредс�
 
 ### Реестр проектов
 
-Без реестра сервер регистрирует только собственный корень проекта. Для явной конфигурации:
+Без реестра или при `"projects": []` сервер работает без подключённых источников; `/readiness` по-прежнему проверяет только engine, PostgreSQL, миграции и схему. Каталог движка автоматически не индексируется и не становится проектом. Для подключения источников:
 
 ```bash
 cp docs/examples/projects.json.example "$HOME/.config/local-optimize/projects.json"
@@ -109,18 +109,25 @@ chmod 600 "$HOME/.config/local-optimize/projects.json"
 "${EDITOR:-vi}" "$HOME/.config/local-optimize/projects.json"
 ```
 
-Замените `/absolute/path/to/local-optimize` на фактический существующий каталог. `project_id` и `root_id` затем используются клиентами; абсолютный корень и права доступа определяет только сервер. Дополнительные переменные процесса:
+Замените placeholder-пути на существующие каталоги. `project_id` и `root_id` используются для явного контекста; абсолютные корни и права определяет только сервер. Проект с `"roots": {}` хранит rootless knowledge и доступен для явного/общего поиска, но не для индексации файлов.
+
+Добавление, изменение и отключение источника выполняется атомарной заменой `projects.json` без restart сервера или watchdog. Не редактируйте файл частями во время чтения. Отключение прекращает наблюдение, но не удаляет знания. Отдельно зарегистрированный вложенный корень принадлежит только самому глубокому project/root: родительский watcher его не индексирует. Добавление такого корня меняет `context_fingerprint` родителя и инвалидирует его search/local-answer caches; независимый sibling не меняет старый контекст.
+
+Обычный запрос требует explicit `project_id`/`root_id` + `context_fingerprint` либо client `working_directory`. MCP `roots/list` — workspace hint, а не гарантированный текущий каталог: один `file://` root допустим, несколько требуют уточнения. `global_search=true` явно включает чтение всех текущих проектов без клиентского fingerprint, с общим deadline, двумя активными project calls и глобальными result/graph limits. Неполный ответ имеет `partial: true` и статус `unavailable`.
+
+Дополнительные переменные процесса:
 
 | Переменная | Значение по умолчанию |
 | --- | --- |
 | `RAG_SERVER_URL` | `http://127.0.0.1:8181` |
 | `BIND_ADDRESS` | `127.0.0.1` |
 | `RAG_SERVER_PORT` | `8181` |
-| `ALLOWED_INDEX_ROOTS` | Корень проекта; несколько корней разделяются `:`. |
+| `ALLOWED_INDEX_ROOTS` | Пусто; legacy-настройка не создаёт проект. Используйте `projects.json`. |
 | `PROJECTS_REGISTRY_FILE` | `~/.config/local-optimize/projects.json` |
 | `LOCAL_OPTIMIZE_STATE_DIR` | `~/.local/state/local-optimize`; inference lock и runtime state. |
 | `MODEL_PATH`, `TOKENIZER_PATH` | `models/multilingual-e5-small` |
 | `RAG_RELEVANCE_FLOOR` | `0.50` |
+| `WATCHDOG_RECONCILE_SECONDS` | `300`; минимум `1`, период обновления реестра и metadata reconciliation. |
 | `OLLAMA_HOST` | `127.0.0.1:11434`; разрешён только прямой HTTP loopback. |
 
 Это переменные **процесса**, а не дополнительные секреты. При ручном запуске задавайте их через `export`; для systemd используйте собственный override unit-файла. Не помещайте реальные пути и значения в публичные примеры.
@@ -213,15 +220,20 @@ curl --fail http://127.0.0.1:8181/runtime
 python watchdog_indexer.py
 ```
 
-Watchdog игнорирует модели, зависимости, артефакты, evaluation и symlink-пути. Он не заменяет первоначальную полную индексацию. При необходимости выполните её в пределах зарегистрированного корня:
+Watchdog обслуживает все зарегистрированные корни одним worker, замечает изменения `projects.json` без restart и исключает вложенные корни других владельцев, модели, зависимости, артефакты, evaluation и symlink-пути. Отключение источника не удаляет знания. Он не заменяет первоначальную полную индексацию. При необходимости выполните её из клиентского каталога или с явным контекстом:
 
 ```bash
-python index_project_codebase.py
+python /absolute/path/to/local-optimize/index_project_codebase.py
+# либо
+python /absolute/path/to/local-optimize/index_project_codebase.py \
+  --project-id parent-project --root-id primary
 ```
+
+Без однозначного зарегистрированного контекста команда завершится с ошибкой. Массовая переиндексация не запускается автоматически.
 
 ## 8. Local-only MCP
 
-Полный `mcp_server.py` и read-only `lmstudio_rag_mcp.py` используют stdio. Для LM Studio предпочтителен read-only wrapper. Пример стандартной MCP-записи (пути замените на собственные):
+Полный `mcp_server.py` и read-only `lmstudio_rag_mcp.py` используют stdio. Для LM Studio предпочтителен read-only wrapper. `search_local_rag` принимает `working_directory`, explicit `project_id`/`root_id` или `global_search=true`; значения по умолчанию не выбирают проект движка. Пример стандартной MCP-записи (пути замените на собственные):
 
 ```json
 {

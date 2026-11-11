@@ -196,7 +196,7 @@ class Settings:
             raise ValueError("PROJECTS_REGISTRY_FILE must be an absolute path")
         self.allowed_index_roots: List[Path] = [
             Path(p).expanduser().resolve()
-            for p in os.getenv("ALLOWED_INDEX_ROOTS", str(self.project_root)).split(":")
+            for p in os.getenv("ALLOWED_INDEX_ROOTS", "").split(":")
             if p
         ]
         self.max_request_body_bytes: int = int(os.getenv("MAX_REQUEST_BODY_BYTES", "10485760"))  # 10 MB

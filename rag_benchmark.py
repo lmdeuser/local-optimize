@@ -62,6 +62,7 @@ def run_benchmark(k: int = 5) -> dict:
     engine = RagEngine()
     context = build_default_project_context(
         settings,
+        working_directory=str(Path.cwd()),
         agent_id="rag-benchmark",
         session_id="benchmark",
         write_visibility="session-private",

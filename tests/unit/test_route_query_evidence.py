@@ -7,6 +7,14 @@ import mcp_server
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def mock_client_context(monkeypatch):
+    async def context(**_kwargs):
+        return object()
+
+    monkeypatch.setattr(mcp_server, "build_client_project_context", context)
+
+
 @pytest.mark.asyncio
 async def test_route_query_uses_retrieved_evidence_not_caller_context(monkeypatch):
     captured = {}

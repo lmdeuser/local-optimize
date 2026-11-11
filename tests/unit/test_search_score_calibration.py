@@ -52,6 +52,7 @@ class PoolCursor:
                 idx, f"content {idx}", {}, list(emb), f"hash-{idx}", now,
                 None, None, "uri", "code", "unverified", None, "0", "1",
                 "local", "", "", "shared", None, "fixture.py", None, "uri", "code",
+                "project-a", "root-a",
             )
             for idx, emb in enumerate(self.embeddings)
         ]

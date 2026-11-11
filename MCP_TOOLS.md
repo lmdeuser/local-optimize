@@ -12,13 +12,13 @@ Cloud escalation through `route_query_tool` returns only a routing signal. Retri
 
 ## RAG context
 
-Search, agentic search, and save expose identifiers and access intent:
+Search, agentic search, and save expose one explicit context selector and access intent:
 
-- `project_id`, `root_id` (canonical names and paths remain server-owned)
-- `write_visibility`, `read_scope`, `agent_id`, `session_id`
-- `source_types`, `language`, `validation_status`, `min_score`, `include_metadata`
+- `project_id` + `root_id` + `context_fingerprint` for explicit registered scope;
+- `working_directory` for server-side longest-root resolution; one MCP `file://` root can be its workspace hint, while multiple roots require clarification;
+- `global_search=true` only on read-only search/agentic search, without a client fingerprint and without project/root/cwd.
 
-Invalid access or validation values are validation errors; no value is silently converted or widened. HTTP authorization identity is server-owned, so client-supplied owner fields are wire-compatible hints rather than authority.
+`context_fingerprint` covers visible roots and nested exclusions. `write_visibility`, `read_scope`, `agent_id`, `session_id`, `source_types`, `language`, `validation_status`, `min_score`, and `include_metadata` remain independent. Invalid access, missing/ambiguous context or validation values fail without fallback or widening. HTTP authorization identity is server-owned, so client-supplied owner fields are wire-compatible hints rather than authority. Global responses include project/root origins and `partial`/completed/omitted project metadata; mutations and local-answer cache reject global context.
 
 ## Tools
 

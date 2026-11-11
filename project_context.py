@@ -1,14 +1,13 @@
-"""Trusted project registry and immutable production security context."""
+"""Trusted source registry and immutable request security contexts."""
 
 from __future__ import annotations
 
-import os
-import json
 import hashlib
-from threading import Lock
+import json
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from threading import Lock
 from typing import Any, Iterable, Mapping
 
 
@@ -42,7 +41,10 @@ def _required(value: str, field_name: str) -> str:
 
 
 def _canonical_root(value: str | Path, field_name: str) -> Path:
-    raw = Path(_required(str(value), field_name)).expanduser()
+    raw_text = _required(str(value), field_name)
+    if ".." in raw_text.replace("\\", "/").split("/"):
+        raise ValueError("Path traversal is forbidden")
+    raw = Path(raw_text).expanduser()
     try:
         resolved = raw.resolve(strict=True)
     except (FileNotFoundError, RuntimeError) as exc:
@@ -52,12 +54,37 @@ def _canonical_root(value: str | Path, field_name: str) -> Path:
     return resolved
 
 
+def _canonical_path(value: str | Path, field_name: str, *, must_exist: bool = False) -> Path:
+    raw = str(value or "")
+    if ".." in raw.replace("\\", "/").split("/"):
+        raise ValueError("Path traversal is forbidden")
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        raise ValueError(f"{field_name} must be absolute")
+    try:
+        if must_exist or candidate.exists() or candidate.is_symlink():
+            return candidate.resolve(strict=True)
+        parent = candidate.parent.resolve(strict=True)
+        if not parent.is_dir():
+            raise ValueError("Path parent must be an existing directory")
+        return parent / candidate.name
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise ValueError("Path or its parent does not exist") from exc
+
+
 def _is_within(candidate: Path, root: Path) -> bool:
     try:
         candidate.relative_to(root)
         return True
     except ValueError:
         return False
+
+
+def _fingerprint(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded, usedforsecurity=False).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,15 +105,16 @@ class ProjectDefinition:
         object.__setattr__(self, "roots", normalized)
 
 
+@dataclass(frozen=True, slots=True)
+class RootOwner:
+    project_id: str
+    project_name: str
+    root_id: str
+    project_root: str
+
+
 class ProjectRegistry:
     REGISTRY_VERSION = 1
-
-    def roots_for(self, project_id: str) -> tuple[Path, ...]:
-        """Return only this registered project's roots for provenance checks."""
-        project = self._projects.get(project_id)
-        if project is None:
-            raise ValueError("Unknown project_id")
-        return tuple(project.roots.values())
 
     def __init__(self, projects: Iterable[ProjectDefinition], *, version: int = 1) -> None:
         if int(version) != self.REGISTRY_VERSION:
@@ -96,9 +124,28 @@ class ProjectRegistry:
         self._projects = {project.project_id: project for project in project_list}
         if len(self._projects) != len(project_list):
             raise ValueError("Duplicate project_id in projects registry")
-        if not self._projects:
-            raise ValueError("Project registry must not be empty")
+        owners: dict[Path, tuple[str, str]] = {}
+        for project in project_list:
+            for root_id, path in project.roots.items():
+                owner = (project.project_id, root_id)
+                if path in owners and owners[path] != owner:
+                    raise ValueError("Ambiguous duplicate registered root")
+                owners[path] = owner
         self.fingerprint = self._compute_fingerprint()
+
+    @property
+    def project_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(self._projects))
+
+    @property
+    def projects(self) -> tuple[ProjectDefinition, ...]:
+        return tuple(self._projects[project_id] for project_id in self.project_ids)
+
+    def roots_for(self, project_id: str) -> tuple[Path, ...]:
+        project = self._projects.get(project_id)
+        if project is None:
+            raise ValueError("Unknown project_id")
+        return tuple(project.roots.values())
 
     def _canonical_payload(self) -> dict[str, Any]:
         return {
@@ -112,15 +159,58 @@ class ProjectRegistry:
                         for root_id in sorted(project.roots)
                     },
                 }
-                for project in sorted(self._projects.values(), key=lambda item: item.project_id)
+                for project in self.projects
             ],
         }
 
     def _compute_fingerprint(self) -> str:
-        encoded = json.dumps(
-            self._canonical_payload(), sort_keys=True, separators=(",", ":"), ensure_ascii=False
-        ).encode("utf-8")
-        return "sha256:" + hashlib.sha256(encoded, usedforsecurity=False).hexdigest()
+        return _fingerprint(self._canonical_payload())
+
+    def _nested_exclusions(self, root: Path) -> list[dict[str, str]]:
+        excluded = []
+        for project in self.projects:
+            for root_id, candidate in project.roots.items():
+                if candidate != root and _is_within(candidate, root):
+                    excluded.append({
+                        "project_id": project.project_id,
+                        "root_id": root_id,
+                        "path": str(candidate),
+                    })
+        return sorted(excluded, key=lambda item: (item["path"], item["project_id"], item["root_id"]))
+
+    def root_fingerprint(self, project_id: str, root_id: str) -> str:
+        project = self._projects.get(project_id)
+        if project is None:
+            raise ValueError("Unknown project_id")
+        root = project.roots.get(root_id)
+        if root is None:
+            raise ValueError("Unknown root_id")
+        return _fingerprint({
+            "scope": "root",
+            "project_id": project.project_id,
+            "project_name": project.project_name,
+            "root_id": root_id,
+            "project_root": str(root),
+            "excluded_roots": self._nested_exclusions(root),
+        })
+
+    def project_fingerprint(self, project_id: str) -> str:
+        project = self._projects.get(project_id)
+        if project is None:
+            raise ValueError("Unknown project_id")
+        roots = []
+        for root_id, root in sorted(project.roots.items()):
+            roots.append({
+                "root_id": root_id,
+                "project_root": str(root),
+                "excluded_roots": self._nested_exclusions(root),
+            })
+        return _fingerprint({
+            "scope": "knowledge",
+            "project_id": project.project_id,
+            "project_name": project.project_name,
+            "roots": roots,
+        })
 
     @classmethod
     def from_file(cls, path: str | Path) -> "ProjectRegistry":
@@ -138,13 +228,9 @@ class ProjectRegistry:
             roots = entry.get("roots", {})
             if not isinstance(roots, dict):
                 raise ValueError("Projects registry entry has an invalid structure")
-            projects.append(
-                ProjectDefinition(
-                    entry.get("project_id", ""),
-                    entry.get("project_name", ""),
-                    roots,
-                )
-            )
+            projects.append(ProjectDefinition(
+                entry.get("project_id", ""), entry.get("project_name", ""), roots,
+            ))
         registry = cls(projects, version=payload.get("version", 0))
         declared = payload.get("fingerprint")
         if declared is not None and declared != registry.fingerprint:
@@ -156,21 +242,50 @@ class ProjectRegistry:
         registry_file = Path(settings.projects_file).expanduser()
         if registry_file.exists():
             return cls.from_file(registry_file)
-        project_root = _canonical_root(settings.project_root, "built_in_project_root")
-        project_id = os.getenv("PROJECT_ID", project_root.name)
-        project_name = os.getenv("PROJECT_NAME", project_root.name)
-        roots: dict[str, Path] = {os.getenv("ROOT_ID", "primary"): project_root}
-        for index, candidate in enumerate(settings.allowed_index_roots, start=1):
-            resolved = _canonical_root(candidate, "allowed_index_root")
-            if resolved not in roots.values():
-                roots[f"root-{index}"] = resolved
-        return cls([ProjectDefinition(project_id, project_name, roots)])
+        return cls([])
+
+    def owner_for_path(self, value: str | Path, *, must_exist: bool = False) -> RootOwner:
+        candidate = _canonical_path(value, "registered_path", must_exist=must_exist)
+        matches = []
+        for project in self.projects:
+            for root_id, root in project.roots.items():
+                if _is_within(candidate, root):
+                    matches.append((len(root.parts), project, root_id, root))
+        if not matches:
+            raise ValueError("Path is outside all registered roots")
+        deepest = max(item[0] for item in matches)
+        selected = [item for item in matches if item[0] == deepest]
+        if len(selected) != 1:
+            raise ValueError("Ambiguous registered root ownership")
+        _, project, root_id, root = selected[0]
+        return RootOwner(project.project_id, project.project_name, root_id, str(root))
+
+    def is_owned_by(self, value: str | Path, *, project_id: str, root_id: str) -> bool:
+        try:
+            owner = self.owner_for_path(value)
+        except (OSError, ValueError):
+            return False
+        return (owner.project_id, owner.root_id) == (project_id, root_id)
+
+    def _validate_fingerprint(
+        self,
+        actual: str,
+        *,
+        context_fingerprint_hint: str | None,
+        registry_fingerprint_hint: str | None,
+    ) -> None:
+        if context_fingerprint_hint is not None and context_fingerprint_hint != actual:
+            raise ValueError("Context fingerprint mismatch")
+        if context_fingerprint_hint is None and registry_fingerprint_hint is not None:
+            if registry_fingerprint_hint != self.fingerprint:
+                raise ValueError("Projects registry fingerprint mismatch")
 
     def resolve(
         self,
         *,
-        project_id: str,
-        root_id: str,
+        project_id: str | None = None,
+        root_id: str | None = None,
+        working_directory: str | None = None,
         write_visibility: str,
         read_scope: str,
         agent_id: str,
@@ -183,15 +298,25 @@ class ProjectRegistry:
         project_root_hint: str | None = None,
         allowed_roots_hint: Iterable[str] | None = None,
         registry_fingerprint_hint: str | None = None,
+        context_fingerprint_hint: str | None = None,
     ) -> "ProjectContext":
-        if registry_fingerprint_hint is not None and registry_fingerprint_hint != self.fingerprint:
-            raise ValueError("Projects registry fingerprint mismatch")
-        project = self._projects.get(project_id)
+        if working_directory is not None:
+            if project_id or root_id:
+                raise ValueError("working_directory cannot be combined with project_id/root_id")
+            owner = self.owner_for_path(_canonical_root(working_directory, "working_directory"))
+            project_id, root_id = owner.project_id, owner.root_id
+        project = self._projects.get(str(project_id or ""))
         if project is None:
             raise ValueError("Unknown project_id")
-        active_root = project.roots.get(root_id)
+        active_root = project.roots.get(str(root_id or ""))
         if active_root is None:
             raise ValueError("Unknown root_id")
+        scoped_fingerprint = self.root_fingerprint(project.project_id, str(root_id))
+        self._validate_fingerprint(
+            scoped_fingerprint,
+            context_fingerprint_hint=context_fingerprint_hint,
+            registry_fingerprint_hint=registry_fingerprint_hint,
+        )
         if project_root_hint:
             hint = _canonical_root(project_root_hint, "project_root_hint")
             if hint != active_root:
@@ -204,7 +329,7 @@ class ProjectRegistry:
         return ProjectContext(
             project_id=project.project_id,
             project_name=project.project_name,
-            root_id=root_id,
+            root_id=str(root_id),
             project_root=str(active_root),
             allowed_roots=tuple(str(path) for path in project.roots.values()),
             write_visibility=WriteVisibility(write_visibility),
@@ -217,12 +342,14 @@ class ProjectRegistry:
             min_score=min_score,
             include_metadata=include_metadata,
             registry_fingerprint=self.fingerprint,
+            context_fingerprint=scoped_fingerprint,
         )
 
     def resolve_knowledge(
         self,
         *,
-        project_id: str,
+        project_id: str | None = None,
+        working_directory: str | None = None,
         read_scope: str,
         agent_id: str,
         session_id: str,
@@ -231,13 +358,23 @@ class ProjectRegistry:
         min_score: float = 0.0,
         include_metadata: bool = True,
         registry_fingerprint_hint: str | None = None,
+        context_fingerprint_hint: str | None = None,
     ) -> "KnowledgeContext":
-        """Resolve a memory/search scope without requiring a filesystem root."""
-        if registry_fingerprint_hint is not None and registry_fingerprint_hint != self.fingerprint:
-            raise ValueError("Projects registry fingerprint mismatch")
-        project = self._projects.get(project_id)
+        if working_directory is not None:
+            if project_id:
+                raise ValueError("working_directory cannot be combined with project_id")
+            project_id = self.owner_for_path(
+                _canonical_root(working_directory, "working_directory")
+            ).project_id
+        project = self._projects.get(str(project_id or ""))
         if project is None:
             raise ValueError("Unknown project_id")
+        scoped_fingerprint = self.project_fingerprint(project.project_id)
+        self._validate_fingerprint(
+            scoped_fingerprint,
+            context_fingerprint_hint=context_fingerprint_hint,
+            registry_fingerprint_hint=registry_fingerprint_hint,
+        )
         return KnowledgeContext(
             project_id=project.project_id,
             project_name=project.project_name,
@@ -249,7 +386,44 @@ class ProjectRegistry:
             min_score=min_score,
             include_metadata=include_metadata,
             registry_fingerprint=self.fingerprint,
+            context_fingerprint=scoped_fingerprint,
         )
+
+
+def _common_request_fields(context: Any) -> dict[str, Any]:
+    return {
+        "read_scope": context.read_scope.value,
+        "agent_id": context.agent_id,
+        "session_id": context.session_id,
+        "source_types": list(context.source_types),
+        "language": context.language,
+        "min_score": context.min_score,
+        "include_metadata": context.include_metadata,
+    }
+
+
+def _normalize_common(context: Any) -> None:
+    for name in ("agent_id", "session_id"):
+        object.__setattr__(context, name, _required(getattr(context, name), name))
+    object.__setattr__(context, "read_scope", ReadScope(context.read_scope))
+    object.__setattr__(context, "source_types", tuple(sorted(str(item) for item in context.source_types)))
+    object.__setattr__(context, "language", str(context.language).strip().lower() or "en")
+    object.__setattr__(context, "min_score", float(context.min_score))
+    if not -1.0 <= context.min_score <= 1.0:
+        raise ValueError("min_score must be between -1 and 1")
+
+
+def _identity_cache_fields(context: Any) -> tuple[Any, ...]:
+    identifies_agent = context.read_scope in (ReadScope.AGENT, ReadScope.SESSION)
+    identifies_session = context.read_scope is ReadScope.SESSION
+    return (
+        context.read_scope.value,
+        context.agent_id if identifies_agent else "",
+        context.session_id if identifies_session else "",
+        tuple(context.source_types),
+        context.min_score,
+        context.include_metadata,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,33 +443,27 @@ class ProjectContext:
     min_score: float = 0.0
     include_metadata: bool = True
     registry_fingerprint: str = ""
+    context_fingerprint: str = ""
 
     def __post_init__(self) -> None:
-        for name in ("project_id", "project_name", "root_id", "agent_id", "session_id"):
+        for name in ("project_id", "project_name", "root_id"):
             object.__setattr__(self, name, _required(getattr(self, name), name))
+        _normalize_common(self)
         try:
             active_root = _canonical_root(self.project_root, "project_root")
         except ValueError as exc:
             raise ValueError("Active project_root must be an existing registered root") from exc
-        registered_roots = tuple(
-            str(_canonical_root(root, "allowed_root")) for root in self.allowed_roots
-        )
+        registered_roots = tuple(str(_canonical_root(root, "allowed_root")) for root in self.allowed_roots)
         if str(active_root) not in registered_roots:
             raise ValueError("Active project_root must be a registered root")
         object.__setattr__(self, "project_root", str(active_root))
         object.__setattr__(self, "allowed_roots", registered_roots)
         object.__setattr__(self, "write_visibility", WriteVisibility(self.write_visibility))
-        object.__setattr__(self, "read_scope", ReadScope(self.read_scope))
         object.__setattr__(self, "validation_status", ValidationStatus(self.validation_status))
-        object.__setattr__(self, "source_types", tuple(sorted(str(item) for item in self.source_types)))
-        object.__setattr__(self, "language", str(self.language).strip().lower() or "en")
-        object.__setattr__(self, "min_score", float(self.min_score))
-        if not -1.0 <= self.min_score <= 1.0:
-            raise ValueError("min_score must be between -1 and 1")
-        if self.registry_fingerprint:
-            object.__setattr__(
-                self, "registry_fingerprint", _required(self.registry_fingerprint, "registry_fingerprint")
-            )
+        for name in ("registry_fingerprint", "context_fingerprint"):
+            value = getattr(self, name)
+            if value:
+                object.__setattr__(self, name, _required(value, name))
 
     def validate_path(self, value: str | Path, *, must_exist: bool = False) -> Path:
         raw = str(value)
@@ -304,18 +472,8 @@ class ProjectContext:
         candidate = Path(value).expanduser()
         if not candidate.is_absolute():
             candidate = Path(self.project_root) / candidate
-        try:
-            if must_exist or candidate.exists() or candidate.is_symlink():
-                candidate = candidate.resolve(strict=True)
-            else:
-                parent = candidate.parent.resolve(strict=True)
-                if not parent.is_dir():
-                    raise ValueError("Path parent must be an existing directory")
-                candidate = parent / candidate.name
-        except (FileNotFoundError, RuntimeError) as exc:
-            raise ValueError("Path or its parent does not exist") from exc
-        active_root = Path(self.project_root)
-        if not _is_within(candidate, active_root):
+        candidate = _canonical_path(candidate, "path", must_exist=must_exist)
+        if not _is_within(candidate, Path(self.project_root)):
             raise ValueError("Path is outside the active registered root")
         return candidate
 
@@ -327,27 +485,17 @@ class ProjectContext:
             self.root_id,
             self.project_root,
             tuple(self.allowed_roots),
-            self.read_scope.value,
+            *_identity_cache_fields(self),
             self.write_visibility.value,
             self.agent_id,
             self.session_id,
-            tuple(self.source_types),
             self.language,
             self.validation_status.value,
-            self.min_score,
-            self.include_metadata,
-            self.registry_fingerprint,
+            self.context_fingerprint,
         )
 
-    def search_cache_key(
-        self,
-        query: str,
-        *,
-        limit: int,
-        score_threshold: float | None = None,
-        search_mode: str = "search",
-        parameters: Iterable[Any] = (),
-    ) -> tuple[Any, ...]:
+    def search_cache_key(self, query: str, *, limit: int, score_threshold: float | None = None,
+                         search_mode: str = "search", parameters: Iterable[Any] = ()) -> tuple[Any, ...]:
         return (
             *self.cache_key,
             str(query).strip(),
@@ -362,15 +510,10 @@ class ProjectContext:
             "project_id": self.project_id,
             "root_id": self.root_id,
             "write_visibility": self.write_visibility.value,
-            "read_scope": self.read_scope.value,
-            "agent_id": self.agent_id,
-            "session_id": self.session_id,
-            "source_types": list(self.source_types),
-            "language": self.language,
+            **_common_request_fields(self),
             "validation_status": self.validation_status.value,
-            "min_score": self.min_score,
-            "include_metadata": self.include_metadata,
             "registry_fingerprint": self.registry_fingerprint,
+            "context_fingerprint": self.context_fingerprint,
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -384,8 +527,6 @@ class ProjectContext:
 
 @dataclass(frozen=True, slots=True)
 class KnowledgeContext:
-    """Validated project namespace and ACL for retrieval, with no filesystem root."""
-
     project_id: str
     project_name: str
     read_scope: ReadScope
@@ -396,56 +537,104 @@ class KnowledgeContext:
     min_score: float = 0.0
     include_metadata: bool = True
     registry_fingerprint: str = ""
+    context_fingerprint: str = ""
 
     def __post_init__(self) -> None:
-        for name in ("project_id", "project_name", "agent_id", "session_id"):
+        for name in ("project_id", "project_name"):
             object.__setattr__(self, name, _required(getattr(self, name), name))
-        object.__setattr__(self, "read_scope", ReadScope(self.read_scope))
-        object.__setattr__(self, "source_types", tuple(sorted(str(item) for item in self.source_types)))
-        object.__setattr__(self, "language", str(self.language).strip().lower() or "en")
-        object.__setattr__(self, "min_score", float(self.min_score))
-        if not -1.0 <= self.min_score <= 1.0:
-            raise ValueError("min_score must be between -1 and 1")
-        if self.registry_fingerprint:
-            object.__setattr__(
-                self, "registry_fingerprint", _required(self.registry_fingerprint, "registry_fingerprint")
-            )
+        _normalize_common(self)
+        for name in ("registry_fingerprint", "context_fingerprint"):
+            value = getattr(self, name)
+            if value:
+                object.__setattr__(self, name, _required(value, name))
 
     def to_request_dict(self) -> dict[str, Any]:
         return {
             "project_id": self.project_id,
-            "read_scope": self.read_scope.value,
-            "agent_id": self.agent_id,
-            "session_id": self.session_id,
-            "source_types": list(self.source_types),
-            "language": self.language,
-            "min_score": self.min_score,
-            "include_metadata": self.include_metadata,
+            **_common_request_fields(self),
             "registry_fingerprint": self.registry_fingerprint,
+            "context_fingerprint": self.context_fingerprint,
         }
 
-    def search_cache_key(
-        self,
-        query: str,
-        *,
-        limit: int,
-        score_threshold: float | None = None,
-        search_mode: str = "search",
-        parameters: Iterable[Any] = (),
-    ) -> tuple[Any, ...]:
-        identifies_agent = self.read_scope in (ReadScope.AGENT, ReadScope.SESSION)
-        identifies_session = self.read_scope is ReadScope.SESSION
+    def search_cache_key(self, query: str, *, limit: int, score_threshold: float | None = None,
+                         search_mode: str = "search", parameters: Iterable[Any] = ()) -> tuple[Any, ...]:
         return (
             self.project_id,
-            self.read_scope.value,
-            self.agent_id if identifies_agent else "",
-            self.session_id if identifies_session else "",
-            tuple(self.source_types),
+            *_identity_cache_fields(self),
             self.min_score if score_threshold is None else float(score_threshold),
-            self.include_metadata,
-            self.registry_fingerprint,
+            self.context_fingerprint,
             str(query).strip(),
             int(limit),
+            str(search_mode),
+            tuple(parameters),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class WorkingDirectoryContext:
+    working_directory: str
+    read_scope: ReadScope
+    agent_id: str
+    session_id: str
+    source_types: tuple[str, ...] = field(default_factory=tuple)
+    language: str = "en"
+    min_score: float = 0.0
+    include_metadata: bool = True
+    write_visibility: WriteVisibility = WriteVisibility.SESSION_PRIVATE
+    validation_status: ValidationStatus = ValidationStatus.UNVERIFIED
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "working_directory", str(_canonical_root(self.working_directory, "working_directory")))
+        _normalize_common(self)
+        object.__setattr__(self, "write_visibility", WriteVisibility(self.write_visibility))
+        object.__setattr__(self, "validation_status", ValidationStatus(self.validation_status))
+
+    def to_request_dict(self) -> dict[str, Any]:
+        return {
+            "working_directory": self.working_directory,
+            "write_visibility": self.write_visibility.value,
+            "validation_status": self.validation_status.value,
+            **_common_request_fields(self),
+        }
+
+    def search_cache_key(self, query: str, *, limit: int, score_threshold: float | None = None,
+                         search_mode: str = "search", parameters: Iterable[Any] = ()) -> tuple[Any, ...]:
+        return (
+            "working-directory",
+            self.working_directory,
+            *_identity_cache_fields(self),
+            str(query).strip(),
+            int(limit),
+            self.min_score if score_threshold is None else float(score_threshold),
+            str(search_mode),
+            tuple(parameters),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class GlobalKnowledgeContext:
+    read_scope: ReadScope
+    agent_id: str
+    session_id: str
+    source_types: tuple[str, ...] = field(default_factory=tuple)
+    language: str = "en"
+    min_score: float = 0.0
+    include_metadata: bool = True
+
+    def __post_init__(self) -> None:
+        _normalize_common(self)
+
+    def to_request_dict(self) -> dict[str, Any]:
+        return {"global_search": True, **_common_request_fields(self)}
+
+    def search_cache_key(self, query: str, *, limit: int, score_threshold: float | None = None,
+                         search_mode: str = "search", parameters: Iterable[Any] = ()) -> tuple[Any, ...]:
+        return (
+            "global",
+            *_identity_cache_fields(self),
+            str(query).strip(),
+            int(limit),
+            self.min_score if score_threshold is None else float(score_threshold),
             str(search_mode),
             tuple(parameters),
         )
@@ -456,20 +645,28 @@ def build_default_project_context(
     *,
     agent_id: str,
     session_id: str,
+    project_id: str | None = None,
+    root_id: str | None = None,
+    working_directory: str | None = None,
     write_visibility: str = "session-private",
     read_scope: str = "session",
-    root_id: str | None = None,
     source_types: Iterable[str] = (),
     language: str = "en",
     validation_status: str = "unverified",
     min_score: float = 0.0,
     include_metadata: bool = True,
 ) -> ProjectContext:
+    if not project_id and not working_directory:
+        raise ValueError("Explicit project_id/root_id or client working_directory is required")
     registry = get_project_registry(settings)
-    project_root = _canonical_root(settings.project_root, "built_in_project_root")
+    if project_id and not root_id:
+        project = next((item for item in registry.projects if item.project_id == project_id), None)
+        if project is not None and len(project.roots) == 1:
+            root_id = next(iter(project.roots))
     return registry.resolve(
-        project_id=os.getenv("PROJECT_ID", project_root.name),
-        root_id=root_id or os.getenv("ROOT_ID", "primary"),
+        project_id=project_id,
+        root_id=root_id,
+        working_directory=working_directory,
         write_visibility=write_visibility,
         read_scope=read_scope,
         agent_id=agent_id,
@@ -483,26 +680,24 @@ def build_default_project_context(
 
 
 _registry_lock = Lock()
-_registry_instances: dict[str, tuple[int, ProjectRegistry]] = {}
+_registry_instances: dict[str, tuple[tuple[int, int, int], ProjectRegistry]] = {}
 
 
 def get_project_registry(settings: Any) -> ProjectRegistry:
-    """Return the process-wide registry instance for a configured registry path."""
     registry_path = Path(settings.projects_file).expanduser().absolute()
     key = str(registry_path)
     try:
-        current_mtime = registry_path.stat().st_mtime_ns if registry_path.exists() else -1
+        stat = registry_path.stat()
+        current_version = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
     except OSError:
-        current_mtime = -1
-
+        current_version = (-1, -1, -1)
     with _registry_lock:
         cached = _registry_instances.get(key)
-        if cached is None or cached[0] != current_mtime:
+        if cached is None or cached[0] != current_version:
             registry = ProjectRegistry.from_settings(settings)
-            _registry_instances[key] = (current_mtime, registry)
+            _registry_instances[key] = (current_version, registry)
             return registry
         return cached[1]
-
 
 
 def configured_context(

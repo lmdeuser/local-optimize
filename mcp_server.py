@@ -13,6 +13,7 @@ import os
 import sys
 import time
 import uuid
+import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
@@ -52,7 +53,11 @@ from response_format import (
     dumps as compact_dumps,
     normalize_verbosity,
 )
-from project_context import get_project_registry
+from project_context import (
+    GlobalKnowledgeContext,
+    WorkingDirectoryContext,
+    get_project_registry,
+)
 from fast_router import (
     OLLAMA_MODEL,
     OLLAMA_NUM_CTX,
@@ -65,8 +70,8 @@ from fast_router import (
 from local_inference import run_cancellable, InferenceUnavailable, correlation_id
 from skills_manager import load_manifest, safe_skills_path, session_skills_manager
 
-DEFAULT_PROJECT_ID = os.getenv("PROJECT_ID", BASE_DIR.name)
-DEFAULT_ROOT_ID = os.getenv("ROOT_ID", "primary")
+DEFAULT_PROJECT_ID = ""
+DEFAULT_ROOT_ID = ""
 # Keep every MCP inference path on the same resident RAG model.
 LOCAL_TASK_MODEL = OLLAMA_MODEL
 LOCAL_TASK_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_SIMPLE_TASK_TIMEOUT_SECONDS", "150"))
@@ -80,7 +85,6 @@ LOCAL_TASK_SYSTEM_PROMPT = (
     "If required information is missing, return INSUFFICIENT_DATA. "
     "Return only the requested result."
 )
-PROJECT_REGISTRY = get_project_registry(settings)
 MCP_AGENT_ID = settings.server_agent_id
 MCP_SESSION_ID = str(uuid.uuid4())
 
@@ -89,6 +93,7 @@ def build_project_context(
     *,
     project_id: str,
     root_id: str,
+    working_directory: str | None = None,
     write_visibility: str,
     read_scope: str,
     agent_id: str,
@@ -102,6 +107,7 @@ def build_project_context(
     return get_project_registry(settings).resolve(
         project_id=project_id,
         root_id=root_id,
+        working_directory=working_directory,
         write_visibility=write_visibility,
         read_scope=read_scope,
         agent_id=agent_id,
@@ -131,6 +137,151 @@ def build_knowledge_context(
         agent_id=agent_id,
         session_id=session_id,
         source_types=source_types or [],
+        language=language,
+        min_score=min_score,
+        include_metadata=include_metadata,
+    )
+
+
+class ClientContextError(ValueError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+def operation_error(exc: Exception, code: str, message: str, corr: dict) -> dict:
+    is_context = isinstance(exc, ClientContextError)
+    return {
+        "status": "error",
+        "error": str(exc) if is_context else message,
+        "code": getattr(exc, "code", code),
+        "correlation": corr,
+    }
+
+
+async def client_working_directory() -> str:
+    try:
+        result = await mcp.get_context().session.list_roots()
+    except Exception as exc:
+        raise ClientContextError(
+            "CLIENT_CONTEXT_REQUIRED",
+            "Pass working_directory or explicit project/root; MCP roots are unavailable.",
+        ) from exc
+    roots = list(getattr(result, "roots", []) or [])
+    if len(roots) != 1:
+        raise ClientContextError(
+            "AMBIGUOUS_CLIENT_CONTEXT" if roots else "CLIENT_CONTEXT_REQUIRED",
+            "Pass the exact client working_directory; MCP workspace roots are not a current directory.",
+        )
+    parsed = urllib.parse.urlparse(str(roots[0].uri))
+    if parsed.scheme != "file" or parsed.netloc not in ("", "localhost"):
+        raise ClientContextError("INVALID_CLIENT_ROOT", "Only a local file:// MCP root is supported.")
+    return urllib.parse.unquote(parsed.path)
+
+
+async def build_client_project_context(
+    *,
+    project_id: str = "",
+    root_id: str = "",
+    working_directory: str = "",
+    write_visibility: str,
+    read_scope: str,
+    agent_id: str,
+    session_id: str,
+    source_types: Optional[List[str]] = None,
+    language: str = "en",
+    validation_status: str = "unverified",
+    min_score: float = 0.0,
+    include_metadata: bool = True,
+):
+    if project_id or root_id:
+        if working_directory or not project_id or not root_id:
+            raise ClientContextError("INVALID_CONTEXT", "Explicit project_id and root_id must be provided together.")
+        try:
+            return build_project_context(
+                project_id=project_id,
+                root_id=root_id,
+                working_directory=working_directory or None,
+                write_visibility=write_visibility,
+                read_scope=read_scope,
+                agent_id=agent_id,
+                session_id=session_id,
+                source_types=source_types,
+                language=language,
+                validation_status=validation_status,
+                min_score=min_score,
+                include_metadata=include_metadata,
+            )
+        except ValueError as exc:
+            code = "UNKNOWN_PROJECT" if str(exc) == "Unknown project_id" else "INVALID_CONTEXT"
+            raise ClientContextError(code, str(exc)) from exc
+    cwd = working_directory or await client_working_directory()
+    return WorkingDirectoryContext(
+        working_directory=cwd,
+        write_visibility=write_visibility,
+        read_scope=read_scope,
+        agent_id=agent_id,
+        session_id=session_id,
+        source_types=tuple(source_types or ()),
+        language=language,
+        validation_status=validation_status,
+        min_score=min_score,
+        include_metadata=include_metadata,
+    )
+
+
+async def build_client_knowledge_context(
+    *,
+    project_id: str = "",
+    root_id: str = "",
+    working_directory: str = "",
+    global_search: bool = False,
+    read_scope: str,
+    agent_id: str,
+    session_id: str,
+    source_types: Optional[List[str]] = None,
+    language: str = "en",
+    min_score: float = 0.0,
+    include_metadata: bool = True,
+):
+    if global_search:
+        if project_id or root_id or working_directory:
+            raise ClientContextError("INVALID_CONTEXT", "global_search cannot be combined with project/root/cwd.")
+        return GlobalKnowledgeContext(
+            read_scope=read_scope,
+            agent_id=agent_id,
+            session_id=session_id,
+            source_types=tuple(source_types or ()),
+            language=language,
+            min_score=min_score,
+            include_metadata=include_metadata,
+        )
+    if project_id:
+        if working_directory:
+            raise ClientContextError("INVALID_CONTEXT", "project_id cannot be combined with working_directory.")
+        try:
+            return build_knowledge_context(
+                project_id=project_id,
+                read_scope=read_scope,
+                agent_id=agent_id,
+                session_id=session_id,
+                source_types=source_types,
+                language=language,
+                min_score=min_score,
+                include_metadata=include_metadata,
+            )
+        except ValueError as exc:
+            code = "UNKNOWN_PROJECT" if str(exc) == "Unknown project_id" else "INVALID_CONTEXT"
+            raise ClientContextError(code, str(exc)) from exc
+    if root_id:
+        raise ClientContextError("INVALID_CONTEXT", "root_id requires explicit project_id.")
+    cwd = working_directory or await client_working_directory()
+    return WorkingDirectoryContext(
+        working_directory=cwd,
+        read_scope=read_scope,
+        agent_id=agent_id,
+        session_id=session_id,
+        source_types=tuple(source_types or ()),
         language=language,
         min_score=min_score,
         include_metadata=include_metadata,
@@ -253,7 +404,9 @@ async def rag_search(
     agent_id: str = "",
     session_id: str = "",
     project_id: str = DEFAULT_PROJECT_ID,
-    root_id: str = DEFAULT_ROOT_ID,  # Retained for tool compatibility; retrieval has no file-root dependency.
+    root_id: str = DEFAULT_ROOT_ID,
+    working_directory: str = "",
+    global_search: bool = False,
     read_scope: str = "session",
     source_types: Optional[List[str]] = None,
     language: str = "en",
@@ -280,8 +433,11 @@ async def rag_search(
     safe_limit = max(1, min(int(limit), settings.max_search_limit))
 
     try:
-        context = build_knowledge_context(
+        context = await build_client_knowledge_context(
             project_id=project_id,
+            root_id=root_id,
+            working_directory=working_directory,
+            global_search=global_search,
             read_scope=read_scope,
             agent_id=MCP_AGENT_ID,
             session_id=MCP_SESSION_ID,
@@ -317,8 +473,8 @@ async def rag_search(
         return json.dumps(
             {
                 "status": "error",
-                "error": "Invalid search context.",
-                "code": "INVALID_CONTEXT",
+                "error": str(exc),
+                "code": getattr(exc, "code", "INVALID_CONTEXT"),
                 "correlation": corr,
             },
             ensure_ascii=False,
@@ -350,6 +506,8 @@ async def rag_agentic_search(
     session_id: str = "",
     project_id: str = DEFAULT_PROJECT_ID,
     root_id: str = DEFAULT_ROOT_ID,
+    working_directory: str = "",
+    global_search: bool = False,
     read_scope: str = "session",
     source_types: Optional[List[str]] = None,
     language: str = "en",
@@ -368,8 +526,11 @@ async def rag_agentic_search(
     safe_timeout = max(1, min(int(timeout_ms), settings.max_agentic_timeout_ms))
 
     try:
-        context = build_knowledge_context(
+        context = await build_client_knowledge_context(
             project_id=project_id,
+            root_id=root_id,
+            working_directory=working_directory,
+            global_search=global_search,
             read_scope=read_scope,
             agent_id=MCP_AGENT_ID,
             session_id=MCP_SESSION_ID,
@@ -409,8 +570,8 @@ async def rag_agentic_search(
         return json.dumps(
             {
                 "status": "error",
-                "error": "Invalid search context.",
-                "code": "INVALID_CONTEXT",
+                "error": str(exc),
+                "code": getattr(exc, "code", "INVALID_CONTEXT"),
                 "correlation": corr,
             },
             ensure_ascii=False,
@@ -443,6 +604,7 @@ async def rag_save(
     metadata: Optional[Dict[str, Any]] = None,
     project_id: str = DEFAULT_PROJECT_ID,
     root_id: str = DEFAULT_ROOT_ID,
+    working_directory: str = "",
     file_path: str = "",
     document_id: Optional[int] = None,
 ) -> str:
@@ -466,9 +628,10 @@ async def rag_save(
     })
 
     try:
-        context = build_project_context(
+        context = await build_client_project_context(
             project_id=project_id,
             root_id=root_id,
+            working_directory=working_directory,
             write_visibility=write_visibility,
             read_scope="session",
             agent_id=MCP_AGENT_ID,
@@ -494,9 +657,9 @@ async def rag_save(
             "write_visibility": context.write_visibility.value
         }
         return json.dumps(res, ensure_ascii=False, separators=(",", ":"))
-    except Exception:
+    except Exception as exc:
         logger.exception("Error in rag_save")
-        return json.dumps({"status": "error", "error": "Internal error saving knowledge.", "code": "SAVE_ERROR", "correlation": corr}, ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(operation_error(exc, "SAVE_ERROR", "Internal error saving knowledge.", corr), ensure_ascii=False, separators=(",", ":"))
 
 
 @mcp.tool()
@@ -510,6 +673,7 @@ async def rag_deprecate(
     session_id: str = "",
     project_id: str = DEFAULT_PROJECT_ID,
     root_id: str = DEFAULT_ROOT_ID,
+    working_directory: str = "",
     read_scope: str = "session",
 ) -> str:
     """Retire a stored fact so retrieval stops returning it.
@@ -534,9 +698,10 @@ async def rag_deprecate(
             ensure_ascii=False,
         )
     try:
-        context = build_project_context(
+        context = await build_client_project_context(
             project_id=project_id,
             root_id=root_id,
+            working_directory=working_directory,
             write_visibility="shared",
             read_scope=read_scope,
             agent_id=MCP_AGENT_ID,
@@ -554,9 +719,9 @@ async def rag_deprecate(
         )
         res["correlation"] = corr
         return json.dumps(res, ensure_ascii=False, separators=(",", ":"))
-    except Exception:
+    except Exception as exc:
         logger.exception("Error in rag_deprecate")
-        return json.dumps({"status": "error", "error": "Internal error retiring knowledge.", "code": "DEPRECATE_ERROR", "correlation": corr}, ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(operation_error(exc, "DEPRECATE_ERROR", "Internal error retiring knowledge.", corr), ensure_ascii=False, separators=(",", ":"))
 
 
 @mcp.tool()
@@ -569,6 +734,7 @@ async def rag_verify(
     session_id: str = "",
     project_id: str = DEFAULT_PROJECT_ID,
     root_id: str = DEFAULT_ROOT_ID,
+    working_directory: str = "",
     read_scope: str = "session",
 ) -> str:
     """Record that a stored fact was re-checked and still holds, as of now.
@@ -594,9 +760,10 @@ async def rag_verify(
             ensure_ascii=False,
         )
     try:
-        context = build_project_context(
-            project_id=project_id, root_id=root_id, write_visibility="shared",
-            read_scope=read_scope, agent_id=MCP_AGENT_ID, session_id=MCP_SESSION_ID,
+        context = await build_client_project_context(
+            project_id=project_id, root_id=root_id, working_directory=working_directory,
+            write_visibility="shared", read_scope=read_scope,
+            agent_id=MCP_AGENT_ID, session_id=MCP_SESSION_ID,
         )
         client = RagClient(context)
         res = await asyncio.to_thread(
@@ -609,9 +776,9 @@ async def rag_verify(
         )
         res["correlation"] = corr
         return json.dumps(res, ensure_ascii=False, separators=(",", ":"))
-    except Exception:
+    except Exception as exc:
         logger.exception("Error in rag_verify")
-        return json.dumps({"status": "error", "error": "Internal error recording verification.", "code": "VERIFY_ERROR", "correlation": corr}, ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(operation_error(exc, "VERIFY_ERROR", "Internal error recording verification.", corr), ensure_ascii=False, separators=(",", ":"))
 
 
 @mcp.tool()
@@ -623,6 +790,7 @@ async def rag_stale_report(
     session_id: str = "",
     project_id: str = DEFAULT_PROJECT_ID,
     root_id: str = DEFAULT_ROOT_ID,
+    working_directory: str = "",
     read_scope: str = "session",
 ) -> str:
     """List stored knowledge that is overdue for re-confirmation, worst first.
@@ -637,9 +805,10 @@ async def rag_stale_report(
     """
     corr = build_correlation_context(agent_id, session_id, "rag_stale_report")
     try:
-        context = build_project_context(
-            project_id=project_id, root_id=root_id, write_visibility="shared",
-            read_scope=read_scope, agent_id=MCP_AGENT_ID, session_id=MCP_SESSION_ID,
+        context = await build_client_project_context(
+            project_id=project_id, root_id=root_id, working_directory=working_directory,
+            write_visibility="shared", read_scope=read_scope,
+            agent_id=MCP_AGENT_ID, session_id=MCP_SESSION_ID,
         )
         client = RagClient(context)
         res = await asyncio.to_thread(
@@ -651,9 +820,9 @@ async def rag_stale_report(
         )
         res["correlation"] = corr
         return json.dumps(res, ensure_ascii=False, separators=(",", ":"))
-    except Exception:
+    except Exception as exc:
         logger.exception("Error in rag_stale_report")
-        return json.dumps({"status": "error", "error": "Internal error building staleness report.", "code": "STALE_REPORT_ERROR", "correlation": corr}, ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(operation_error(exc, "STALE_REPORT_ERROR", "Internal error building staleness report.", corr), ensure_ascii=False, separators=(",", ":"))
 
 
 @mcp.tool()
@@ -662,15 +831,17 @@ async def rag_consolidate(
     session_id: str = "",
     project_id: str = DEFAULT_PROJECT_ID,
     root_id: str = DEFAULT_ROOT_ID,
+    working_directory: str = "",
     decay_days: float = 30.0,
     min_importance: int = 1,
 ) -> str:
     """Consolidate episodic memory into semantic long-term memory."""
     corr = build_correlation_context(agent_id, session_id, "rag_consolidate")
     try:
-        context = build_project_context(
+        context = await build_client_project_context(
             project_id=project_id,
             root_id=root_id,
+            working_directory=working_directory,
             write_visibility="session-private",
             read_scope="session",
             agent_id=MCP_AGENT_ID,
@@ -691,9 +862,9 @@ async def rag_consolidate(
             }, ensure_ascii=False, separators=(",", ":"))
         res["correlation"] = corr
         return json.dumps(res, ensure_ascii=False, separators=(",", ":"))
-    except Exception:
+    except Exception as exc:
         logger.exception("Error in rag_consolidate")
-        return json.dumps({"status": "error", "error": "Internal error during consolidation.", "code": "CONSOLIDATE_ERROR", "correlation": corr}, ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(operation_error(exc, "CONSOLIDATE_ERROR", "Internal error during consolidation.", corr), ensure_ascii=False, separators=(",", ":"))
 
 
 @mcp.tool()
@@ -702,15 +873,17 @@ async def rag_memory_optimize(
     session_id: str = "",
     project_id: str = DEFAULT_PROJECT_ID,
     root_id: str = DEFAULT_ROOT_ID,
+    working_directory: str = "",
     sim_threshold: float = 0.98,
     apply: bool = False,
 ) -> str:
     """Optimize memory storage by deduplicating semantic chunks."""
     corr = build_correlation_context(agent_id, session_id, "rag_memory_optimize")
     try:
-        context = build_project_context(
+        context = await build_client_project_context(
             project_id=project_id,
             root_id=root_id,
+            working_directory=working_directory,
             write_visibility="session-private",
             read_scope="session",
             agent_id=MCP_AGENT_ID,
@@ -731,9 +904,9 @@ async def rag_memory_optimize(
             }, ensure_ascii=False, separators=(",", ":"))
         res["correlation"] = corr
         return json.dumps(res, ensure_ascii=False, separators=(",", ":"))
-    except Exception:
+    except Exception as exc:
         logger.exception("Error in rag_memory_optimize")
-        return json.dumps({"status": "error", "error": "Internal error during memory optimization.", "code": "OPTIMIZE_ERROR", "correlation": corr}, ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(operation_error(exc, "OPTIMIZE_ERROR", "Internal error during memory optimization.", corr), ensure_ascii=False, separators=(",", ":"))
 
 
 @mcp.tool()
@@ -745,13 +918,15 @@ async def rag_feedback(
     session_id: str = "",
     project_id: str = DEFAULT_PROJECT_ID,
     root_id: str = DEFAULT_ROOT_ID,
+    working_directory: str = "",
 ) -> str:
     """Log user or agent feedback on retrieval results to adjust synaptic weights."""
     corr = build_correlation_context(agent_id, session_id, "rag_feedback")
     try:
-        context = build_project_context(
+        context = await build_client_project_context(
             project_id=project_id,
             root_id=root_id,
+            working_directory=working_directory,
             write_visibility="session-private",
             read_scope="session",
             agent_id=MCP_AGENT_ID,
@@ -773,9 +948,9 @@ async def rag_feedback(
             }, ensure_ascii=False, separators=(",", ":"))
         res["correlation"] = corr
         return json.dumps(res, ensure_ascii=False, separators=(",", ":"))
-    except Exception:
+    except Exception as exc:
         logger.exception("Error in rag_feedback")
-        return json.dumps({"status": "error", "error": "Internal error processing feedback.", "code": "FEEDBACK_ERROR", "correlation": corr}, ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(operation_error(exc, "FEEDBACK_ERROR", "Internal error processing feedback.", corr), ensure_ascii=False, separators=(",", ":"))
 
 
 @mcp.tool()
@@ -912,6 +1087,7 @@ async def route_query_tool(
     session_id: str = "",
     project_id: str = DEFAULT_PROJECT_ID,
     root_id: str = DEFAULT_ROOT_ID,
+    working_directory: str = "",
     read_scope: str = "session",
 ) -> str:
     """Server-computed confidence routing."""
@@ -935,9 +1111,10 @@ async def route_query_tool(
                 "reason": "Unsupported routing policy",
                 "correlation": corr,
             }, ensure_ascii=False, separators=(",", ":"))
-        project_context = build_project_context(
+        project_context = await build_client_project_context(
             project_id=project_id,
             root_id=root_id,
+            working_directory=working_directory,
             write_visibility="session-private",
             read_scope=read_scope,
             agent_id=MCP_AGENT_ID,
@@ -1150,13 +1327,14 @@ async def route_query_tool(
         return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
     except Exception as exc:
         logger.exception("Error in route_query_tool request_id=%s", corr["request_id"])
+        is_context = isinstance(exc, ClientContextError)
         return json.dumps({
-            "status": "unavailable" if isinstance(exc, TimeoutError) else "error",
-            "route": "fallback" if privacy_mode else "escalate",
+            "status": "error" if is_context else "unavailable" if isinstance(exc, TimeoutError) else "error",
+            "route": "fallback" if is_context or privacy_mode else "escalate",
             "confidence": 0.0,
-            "reason": "Internal routing error; correlate with server logs using request_id.",
-            "code": "RAG_AGENT_TIMEOUT" if isinstance(exc, TimeoutError) else "RAG_AGENT_ERROR",
-            "phase": "processing",
+            "reason": str(exc) if is_context else "Internal routing error; correlate with server logs using request_id.",
+            "code": exc.code if is_context else "RAG_AGENT_TIMEOUT" if isinstance(exc, TimeoutError) else "RAG_AGENT_ERROR",
+            "phase": "context" if is_context else "processing",
             "elapsed_ms": int((time.monotonic() - started_at) * 1000),
             "error_type": type(exc).__name__,
             "configured_model": OLLAMA_MODEL,
@@ -1168,6 +1346,8 @@ async def route_query_tool(
 async def rag_assistant(
     query: str,
     project_id: str = DEFAULT_PROJECT_ID,
+    root_id: str = DEFAULT_ROOT_ID,
+    working_directory: str = "",
     read_scope: str = "session",
 ) -> str:
     """Answer from local RAG and local inference only; return unavailable on retrieval failure.
@@ -1181,7 +1361,8 @@ async def rag_assistant(
         policy="rag_first",
         privacy_mode=True,
         project_id=project_id,
-        root_id=DEFAULT_ROOT_ID,
+        root_id=root_id,
+        working_directory=working_directory,
         read_scope=read_scope,
     )
     try:

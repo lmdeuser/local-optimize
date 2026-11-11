@@ -33,9 +33,9 @@ from pydantic import BaseModel, Field
 
 from config import settings
 from project_context import (
+    GlobalKnowledgeContext,
     KnowledgeContext,
     ProjectContext,
-    build_default_project_context,
     get_project_registry,
     ReadScope,
     ValidationStatus,
@@ -361,11 +361,11 @@ def get_rag_engine(request: Request) -> RagEngine:
 
 
 class ProjectContextRequest(BaseModel):
-    project_id: str
-    root_id: str
+    project_id: Optional[str] = None
+    root_id: Optional[str] = None
+    working_directory: Optional[str] = None
     write_visibility: WriteVisibility = WriteVisibility.SESSION_PRIVATE
     read_scope: ReadScope = ReadScope.SESSION
-    # Accepted for wire compatibility only; authorization identity is server-owned.
     agent_id: str = ""
     session_id: str = ""
     source_types: List[str] = Field(default_factory=list)
@@ -375,13 +375,21 @@ class ProjectContextRequest(BaseModel):
     include_metadata: bool = True
     project_root: Optional[str] = None
     allowed_roots: Optional[List[str]] = None
-    registry_fingerprint: str = Field(min_length=8, max_length=128)
+    registry_fingerprint: Optional[str] = Field(default=None, min_length=8, max_length=128)
+    context_fingerprint: Optional[str] = Field(default=None, min_length=8, max_length=128)
 
     def to_context(self, *, agent_id: str, session_id: str) -> ProjectContext:
+        if self.working_directory and (self.project_id or self.root_id):
+            raise HTTPException(status_code=422, detail="working_directory cannot be combined with project/root")
+        if not self.working_directory and (not self.project_id or not self.root_id):
+            raise HTTPException(status_code=422, detail="Explicit project/root or client working_directory is required")
+        if not self.working_directory and not self.context_fingerprint and not self.registry_fingerprint:
+            raise HTTPException(status_code=422, detail="Context fingerprint is required")
         try:
             return get_project_registry(settings).resolve(
                 project_id=self.project_id,
                 root_id=self.root_id,
+                working_directory=self.working_directory,
                 write_visibility=self.write_visibility.value,
                 read_scope=self.read_scope.value,
                 agent_id=agent_id,
@@ -394,15 +402,19 @@ class ProjectContextRequest(BaseModel):
                 project_root_hint=self.project_root,
                 allowed_roots_hint=self.allowed_roots,
                 registry_fingerprint_hint=self.registry_fingerprint,
+                context_fingerprint_hint=self.context_fingerprint,
             )
         except ValueError as exc:
-            raise HTTPException(status_code=403, detail="Project context is not authorized") from exc
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": "CONTEXT_NOT_AUTHORIZED", "message": str(exc)}},
+            ) from exc
 
 
 class KnowledgeContextRequest(BaseModel):
-    """Project namespace and ACL for retrieval; deliberately has no file roots."""
-
-    project_id: str
+    project_id: Optional[str] = None
+    working_directory: Optional[str] = None
+    global_search: bool = False
     read_scope: ReadScope = ReadScope.SESSION
     agent_id: str = ""
     session_id: str = ""
@@ -410,12 +422,32 @@ class KnowledgeContextRequest(BaseModel):
     language: str = "en"
     min_score: float = 0.0
     include_metadata: bool = True
-    registry_fingerprint: str = Field(min_length=8, max_length=128)
+    registry_fingerprint: Optional[str] = Field(default=None, min_length=8, max_length=128)
+    context_fingerprint: Optional[str] = Field(default=None, min_length=8, max_length=128)
 
-    def to_context(self, *, agent_id: str, session_id: str) -> KnowledgeContext:
+    def to_context(self, *, agent_id: str, session_id: str) -> KnowledgeContext | GlobalKnowledgeContext:
+        if self.global_search:
+            if self.project_id or self.working_directory:
+                raise HTTPException(status_code=422, detail="global_search cannot be combined with project/cwd")
+            return GlobalKnowledgeContext(
+                read_scope=self.read_scope,
+                agent_id=agent_id,
+                session_id=session_id,
+                source_types=tuple(self.source_types),
+                language=self.language,
+                min_score=self.min_score,
+                include_metadata=self.include_metadata,
+            )
+        if self.working_directory and self.project_id:
+            raise HTTPException(status_code=422, detail="working_directory cannot be combined with project_id")
+        if not self.working_directory and not self.project_id:
+            raise HTTPException(status_code=422, detail="Explicit project, client working_directory or global_search is required")
+        if not self.working_directory and not self.context_fingerprint and not self.registry_fingerprint:
+            raise HTTPException(status_code=422, detail="Context fingerprint is required")
         try:
             return get_project_registry(settings).resolve_knowledge(
                 project_id=self.project_id,
+                working_directory=self.working_directory,
                 read_scope=self.read_scope.value,
                 agent_id=agent_id,
                 session_id=session_id,
@@ -424,9 +456,13 @@ class KnowledgeContextRequest(BaseModel):
                 min_score=self.min_score,
                 include_metadata=self.include_metadata,
                 registry_fingerprint_hint=self.registry_fingerprint,
+                context_fingerprint_hint=self.context_fingerprint,
             )
         except ValueError as exc:
-            raise HTTPException(status_code=403, detail="Knowledge context is not authorized") from exc
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": "CONTEXT_NOT_AUTHORIZED", "message": str(exc)}},
+            ) from exc
 
 
 class SearchRequest(BaseModel):
@@ -611,6 +647,95 @@ def apply_delta_and_budget(
     return delta, tokens_used
 
 
+def _with_project_origin(raw: dict, context: KnowledgeContext) -> dict:
+    results = []
+    for hit in raw.get("results", []):
+        results.append({
+            **hit,
+            "project_id": context.project_id,
+            "project_name": context.project_name,
+        })
+    return {**raw, "results": results}
+
+
+async def _global_search(
+    req: SearchRequest,
+    context: GlobalKnowledgeContext,
+    engine: RagEngine,
+) -> dict:
+    registry = get_project_registry(settings)
+    deadline = time.monotonic() + SEARCH_EXECUTION_TIMEOUT
+    completed: list[str] = []
+    omitted: list[str] = []
+    results: list[dict] = []
+    caches: dict[str, dict] = {}
+    candidates = 0
+    projects = list(registry.projects)
+
+    for start in range(0, len(projects), 2):
+        batch_projects = projects[start:start + 2]
+        if time.monotonic() >= deadline:
+            omitted.extend(project.project_id for project in batch_projects)
+            continue
+        contexts = [
+            registry.resolve_knowledge(
+                project_id=project.project_id,
+                read_scope=context.read_scope.value,
+                agent_id=context.agent_id,
+                session_id=context.session_id,
+                source_types=context.source_types,
+                language=context.language,
+                min_score=context.min_score,
+                include_metadata=context.include_metadata,
+            )
+            for project in batch_projects
+        ]
+
+        async def run_project(current):
+            raw = await run_bounded_search(lambda: engine.search(
+                context=current,
+                query=req.query,
+                limit=min(req.limit * 3, 30),
+            ))
+            return current, raw
+
+        try:
+            remaining = max(0.001, deadline - time.monotonic())
+            finished = await asyncio.wait_for(
+                asyncio.gather(*(run_project(current) for current in contexts), return_exceptions=True),
+                timeout=remaining,
+            )
+        except TimeoutError:
+            omitted.extend(project.project_id for project in batch_projects)
+            continue
+        for current, outcome in zip(contexts, finished, strict=True):
+            if isinstance(outcome, Exception):
+                omitted.append(current.project_id)
+                continue
+            _, raw = outcome
+            if raw.get("status") != BACKEND_SUCCESS:
+                omitted.append(current.project_id)
+                continue
+            tagged = _with_project_origin(raw, current)
+            completed.append(current.project_id)
+            caches[current.project_id] = tagged.get("cache", {})
+            candidates += int((tagged.get("composite_metrics") or {}).get("candidates_evaluated", 0))
+            results.extend(tagged.get("results", []))
+
+    results.sort(key=lambda hit: hit.get("final_score", hit.get("score", 0.0)), reverse=True)
+    partial = bool(omitted)
+    return {
+        "status": BACKEND_UNAVAILABLE if partial else BACKEND_SUCCESS,
+        "code": "GLOBAL_SEARCH_INCOMPLETE" if partial else None,
+        "partial": partial,
+        "completed_project_ids": completed,
+        "omitted_project_ids": omitted,
+        "results": results,
+        "cache": {"projects": caches},
+        "composite_metrics": {"candidates_evaluated": candidates},
+    }
+
+
 @app.post("/search")
 @app.post("/v1/search")
 async def search(
@@ -625,16 +750,21 @@ async def search(
     model_cfg = get_model_cfg(context.agent_id, req.model_name)
     budget = compute_budget(model_cfg, req.query, req.ctx_tokens_used)
 
+    is_global = isinstance(context, GlobalKnowledgeContext)
     try:
-        raw = await run_bounded_search(
-            lambda: engine.search(
-                context=context,
-                query=req.query,
-                limit=min(req.limit * 3, 30),
+        if is_global:
+            raw = await _global_search(req, context, engine)
+        else:
+            raw = await run_bounded_search(
+                lambda: engine.search(
+                    context=context,
+                    query=req.query,
+                    limit=min(req.limit * 3, 30),
+                )
             )
-        )
-        if raw.get("status", BACKEND_SUCCESS) not in (BACKEND_SUCCESS, "ok"):
-            raise RuntimeError("search backend returned an error status")
+            raw = _with_project_origin(raw, context)
+            if raw.get("status", BACKEND_SUCCESS) not in (BACKEND_SUCCESS, "ok"):
+                raise RuntimeError("search backend returned an error status")
     except HTTPException:
         raise
     except Exception as e:
@@ -645,17 +775,23 @@ async def search(
             detail={"error": {"code": "SEARCH_FAILED", "message": "Search query processing failed", "request_id": req_id}}
         )
 
-    # Below-floor candidates are diagnostics, not evidence worth sending to agents.
     results = [
         hit for hit in raw.get("results", [])
         if hit.get("final_score", hit.get("score", 0.0)) >= max(
             context.min_score, RAG_CONFIDENCE_THRESHOLD
         )
     ]
+    partial = bool(raw.get("partial"))
+    global_fields = {
+        key: raw[key]
+        for key in ("partial", "completed_project_ids", "omitted_project_ids")
+        if key in raw
+    }
+    response_status = raw.get("status", BACKEND_SUCCESS) if is_global else BACKEND_SUCCESS
 
     if not results:
         return {
-            "status": BACKEND_SUCCESS,
+            "status": response_status,
             "route": "llm_needed",
             "reason": raw.get("reason", "insufficient_evidence"),
             "score_kind": raw.get("score_kind", "relevance_not_factual_certainty"),
@@ -668,17 +804,18 @@ async def search(
             "tokens_used": 0,
             "agent_tier": model_cfg["tier"],
             "cache": raw.get("cache", {}),
+            **global_fields,
         }
 
     top_score = results[0].get("final_score", results[0].get("score", 0.0))
-    route = "rag_answer" if top_score >= RAG_CONFIDENCE_THRESHOLD else "llm_needed"
+    route = "rag_answer" if top_score >= RAG_CONFIDENCE_THRESHOLD and not partial else "llm_needed"
 
     delta_results, tokens_used = apply_delta_and_budget(
         results, req.injected_hashes, budget, context.include_metadata
     )
 
     return {
-        "status": BACKEND_SUCCESS,
+        "status": response_status,
         "route": route,
         "reason": raw.get("reason", "evidence_found"),
         "score_kind": raw.get("score_kind", "relevance_not_factual_certainty"),
@@ -691,6 +828,7 @@ async def search(
         "tokens_used": tokens_used,
         "agent_tier": model_cfg["tier"],
         "cache": raw.get("cache", {}),
+        **global_fields,
     }
 
 
@@ -703,6 +841,8 @@ def local_answer_cache_lookup(
     context = req.context.to_context(
         agent_id=request.state.agent_id, session_id=request.state.session_id
     )
+    if isinstance(context, GlobalKnowledgeContext):
+        raise HTTPException(status_code=422, detail="Local answer cache requires one project context")
     try:
         return engine.lookup_local_answer(context, req.prompt_hash)
     except Exception:
@@ -719,6 +859,8 @@ def local_answer_cache_store(
     context = req.context.to_context(
         agent_id=request.state.agent_id, session_id=request.state.session_id
     )
+    if isinstance(context, GlobalKnowledgeContext):
+        raise HTTPException(status_code=422, detail="Local answer cache requires one project context")
     try:
         stored = engine.store_local_answer(
             context,
@@ -730,6 +872,111 @@ def local_answer_cache_store(
     except Exception:
         log.warning("Local answer cache store failed open", exc_info=True)
         return {"status": BACKEND_SUCCESS, "stored": False}
+
+
+async def _global_agentic_search(
+    req: AgenticSearchRequest,
+    context: GlobalKnowledgeContext,
+    engine: RagEngine,
+) -> dict:
+    registry = get_project_registry(settings)
+    deadline = time.monotonic() + min(SEARCH_EXECUTION_TIMEOUT, req.timeout_ms / 1000)
+    completed: list[str] = []
+    omitted: list[str] = []
+    results: list[dict] = []
+    graph: list[dict] = []
+    projects = list(registry.projects)
+    traversed = 0
+    partial = False
+
+    for start in range(0, len(projects), 2):
+        batch_projects = projects[start:start + 2]
+        if time.monotonic() >= deadline:
+            omitted.extend(project.project_id for project in batch_projects)
+            continue
+        contexts = [
+            registry.resolve_knowledge(
+                project_id=project.project_id,
+                read_scope=context.read_scope.value,
+                agent_id=context.agent_id,
+                session_id=context.session_id,
+                source_types=context.source_types,
+                language=context.language,
+                min_score=context.min_score,
+                include_metadata=context.include_metadata,
+            )
+            for project in batch_projects
+        ]
+
+        async def run_project(current):
+            remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
+            raw = await run_bounded_search(lambda: engine.agentic_search(
+                context=current,
+                query=req.query,
+                limit=req.limit,
+                max_depth=req.max_depth,
+                max_entities=req.max_entities,
+                max_relations=req.max_relations,
+                timeout_ms=min(req.timeout_ms, remaining_ms),
+            ))
+            return current, raw
+
+        try:
+            remaining = max(0.001, deadline - time.monotonic())
+            finished = await asyncio.wait_for(
+                asyncio.gather(*(run_project(current) for current in contexts), return_exceptions=True),
+                timeout=remaining,
+            )
+        except TimeoutError:
+            omitted.extend(project.project_id for project in batch_projects)
+            continue
+        for current, outcome in zip(contexts, finished, strict=True):
+            if isinstance(outcome, Exception):
+                omitted.append(current.project_id)
+                continue
+            _, raw = outcome
+            if raw.get("status") != BACKEND_SUCCESS:
+                omitted.append(current.project_id)
+                continue
+            completed.append(current.project_id)
+            partial = partial or bool(raw.get("partial"))
+            traversed += int(raw.get("traversed_relations", 0))
+            for hit in raw.get("results", []):
+                results.append({
+                    **hit,
+                    "project_id": current.project_id,
+                    "project_name": current.project_name,
+                })
+            for node in raw.get("graph_context", []):
+                graph.append({
+                    **node,
+                    "project_id": current.project_id,
+                    "project_name": current.project_name,
+                })
+
+    partial = partial or bool(omitted)
+    results.sort(key=lambda hit: hit.get("final_score", hit.get("score", 0.0)), reverse=True)
+    return {
+        "status": BACKEND_UNAVAILABLE if partial else BACKEND_SUCCESS,
+        "code": "GLOBAL_SEARCH_INCOMPLETE" if partial else None,
+        "partial": partial,
+        "completed_project_ids": completed,
+        "omitted_project_ids": omitted,
+        "results": results[:req.limit],
+        "graph_context": graph[:req.max_entities],
+        "security_scope": {
+            "project_ids": completed,
+            "read_scope": context.read_scope.value,
+        },
+        "applied_limits": {
+            "max_depth": req.max_depth,
+            "max_entities": req.max_entities,
+            "max_relations": req.max_relations,
+            "limit": req.limit,
+            "timeout_ms": req.timeout_ms,
+        },
+        "traversed_relations": min(traversed, req.max_relations),
+    }
 
 
 @app.post("/agentic-search")
@@ -747,18 +994,23 @@ async def agentic_search(
     model_cfg = get_model_cfg(context.agent_id, req.model_name)
     budget = compute_budget(model_cfg, req.query, req.ctx_tokens_used)
 
+    is_global = isinstance(context, GlobalKnowledgeContext)
     try:
-        raw = await run_bounded_search(
-            lambda: engine.agentic_search(
-                context=context,
-                query=req.query,
-                limit=req.limit,
-                max_depth=req.max_depth,
-                max_entities=req.max_entities,
-                max_relations=req.max_relations,
-                timeout_ms=req.timeout_ms,
+        if is_global:
+            raw = await _global_agentic_search(req, context, engine)
+        else:
+            raw = await run_bounded_search(
+                lambda: engine.agentic_search(
+                    context=context,
+                    query=req.query,
+                    limit=req.limit,
+                    max_depth=req.max_depth,
+                    max_entities=req.max_entities,
+                    max_relations=req.max_relations,
+                    timeout_ms=req.timeout_ms,
+                )
             )
-        )
+            raw = _with_project_origin(raw, context)
     except HTTPException:
         raise
     except Exception as e:
@@ -769,16 +1021,12 @@ async def agentic_search(
             detail={"error": {"code": "AGENTIC_SEARCH_FAILED", "message": "Agentic graph search failed", "request_id": req_id}}
         )
 
-    if raw.get("status", BACKEND_SUCCESS) not in (BACKEND_SUCCESS, "ok"):
+    if not is_global and raw.get("status", BACKEND_SUCCESS) not in (BACKEND_SUCCESS, "ok"):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"error": {"code": "AGENTIC_BACKEND_ERROR", "message": "Agentic backend is unavailable"}},
         )
 
-    # RagEngine.agentic_search returns its vector hits under "results"; there is no
-    # "vector_hits" key. Reading the wrong key silently dropped every hit and then
-    # overwrote "results" with the empty list, so GraphRAG answers arrived with graph
-    # context but no source chunks.
     delta_hits, tokens_used = apply_delta_and_budget(
         raw.get("results", []),
         req.injected_hashes,
@@ -786,8 +1034,9 @@ async def agentic_search(
         context.include_metadata,
     )
 
-    raw["results"] = delta_hits
-    raw["status"] = BACKEND_SUCCESS
+    raw["results"] = delta_hits[:req.limit]
+    if not is_global:
+        raw["status"] = BACKEND_SUCCESS
     raw["budget_tokens"] = budget
     raw["tokens_used"] = tokens_used
     raw["agent_tier"] = model_cfg["tier"]
@@ -809,7 +1058,11 @@ class HookContextRequest(BaseModel):
     max_chars: int = Field(default=1400, ge=200, le=16000)
     min_score: float = Field(default=0.0, ge=0.0, le=1.0)
     read_scope: ReadScope = ReadScope.SHARED
+    project_id: Optional[str] = None
     root_id: Optional[str] = None
+    working_directory: Optional[str] = None
+    registry_fingerprint: Optional[str] = None
+    context_fingerprint: Optional[str] = None
     injected_hashes: List[str] = Field(default_factory=list)
     heading: Optional[str] = None
 
@@ -825,15 +1078,24 @@ async def hook_context(
     request: Request,
     engine: RagEngine = Depends(get_rag_engine),
 ):
-    context = build_default_project_context(
-        settings,
-        agent_id=request.state.agent_id,
-        session_id=request.state.session_id,
-        read_scope=req.read_scope.value,
-        root_id=req.root_id,
-        min_score=req.min_score,
-        include_metadata=True,
-    )
+    if not req.working_directory and (not req.project_id or not req.root_id):
+        raise HTTPException(status_code=422, detail="Explicit project/root or client working_directory is required")
+    try:
+        context = get_project_registry(settings).resolve(
+            project_id=req.project_id,
+            root_id=req.root_id,
+            working_directory=req.working_directory,
+            agent_id=request.state.agent_id,
+            session_id=request.state.session_id,
+            write_visibility=WriteVisibility.SESSION_PRIVATE.value,
+            read_scope=req.read_scope.value,
+            min_score=req.min_score,
+            include_metadata=True,
+            registry_fingerprint_hint=req.registry_fingerprint,
+            context_fingerprint_hint=req.context_fingerprint,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="Hook context is not authorized") from exc
     try:
         raw = await run_bounded_search(
             lambda: engine.search(

@@ -49,6 +49,7 @@ class PerQueryCursor:
                 chunk_id, f"content {chunk_id}", {}, [1.0, 0.0], f"hash-{chunk_id}",
                 now, None, None, "uri", "code", "unverified", None, "0", "1",
                 "local", "", "", "shared", None, "fixture.py", None, "uri", "code",
+                "project-a", "root-a",
             )
             for chunk_id in pool
         ]

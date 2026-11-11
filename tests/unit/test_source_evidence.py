@@ -51,7 +51,7 @@ def test_note_never_becomes_verified_code():
 
 def test_engine_l1_hit_checks_snapshot_again(monkeypatch, tmp_path):
     import rag_engine
-    from types import SimpleNamespace
+    from project_context import ProjectDefinition, ProjectRegistry
     from tests.unit.test_search_scope_key import make_context
 
     path = tmp_path / "source.py"
@@ -64,7 +64,8 @@ def test_engine_l1_hit_checks_snapshot_again(monkeypatch, tmp_path):
         calls.append(1)
         return {"status": "success", "results": [hit]}
     engine._search_via_persistent_cache = compute
-    monkeypatch.setattr(rag_engine, "get_project_registry", lambda _: SimpleNamespace(roots_for=lambda _: (tmp_path,)))
+    registry = ProjectRegistry([ProjectDefinition("project-a", "Project A", {"root-a": tmp_path})])
+    monkeypatch.setattr(rag_engine, "get_project_registry", lambda _: registry)
     context = make_context(tmp_path)
     assert engine.search(context, "fixture")["results"]
     path.write_text("changed fixture")

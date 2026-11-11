@@ -38,13 +38,19 @@ Structured retrieved evidence is gated by result coverage: ordinary queries need
 
 `MCP tool → RagClient → FastAPI → RagEngine → aiagent.public → retrieved evidence → local formatter → cited answer`
 
-Every search, save, index, delete, move, feedback, maintenance, and GraphRAG request carries one validated `ProjectContext`. Clients send `project_id` and `root_id`; FastAPI resolves canonical names and paths from its own registry before calling the engine. RagEngine has no project-name or root fallback.
+Every request uses one of three explicit context forms: `project_id`/`root_id` plus `context_fingerprint`, a client `working_directory`, or `global_search=true` for read-only fan-out. FastAPI resolves canonical names, roots and current access from its own registry before calling the engine. There is no engine-project, server-cwd or registry fallback. A missing registry and `projects: []` both mean no connected sources and do not prevent readiness when the other dependencies are ready.
+
+MCP `roots/list` supplies workspace hints, not necessarily the current directory. One local file root can be used as `working_directory`; multiple roots require an explicit cwd or project/root. Direct HTTP clients send `working_directory` and the server resolves it. Unknown, missing, conflicting and ambiguous selectors fail without fallback.
 
 ## Project and Path Boundary
 
-`ProjectContext` contains server-resolved `project_id`, `project_name`, `root_id`, `project_root`, and registered roots plus independent `write_visibility`, `read_scope`, owner IDs, source/language filters, validation status, score threshold, and metadata policy.
+`ProjectContext` contains server-resolved `project_id`, `project_name`, `root_id`, `project_root`, and registered roots plus independent `write_visibility`, `read_scope`, owner IDs, source/language filters, validation status, score threshold, and metadata policy. `KnowledgeContext` supports retrieval without a filesystem root; `WorkingDirectoryContext` and `GlobalKnowledgeContext` are client request forms resolved by FastAPI.
 
-One `root_id` selects exactly one active root. Other registered roots are alternatives and cannot be traversed through the active context. Paths use `resolve(strict=False)` (or strict resolution for existing inputs); `..`, symlink escapes, prefix confusion, sibling-root access, and absolute paths outside the active root are rejected. Client path hints may narrow but never expand server policy.
+One canonical path has exactly one owner: the most deeply nested registered root. `..`, symlink escapes, prefix confusion, duplicate roots, sibling-root access and paths outside every registered root are rejected. Parent watchers and manual indexing exclude separately registered nested roots. Retrieval also checks stored project/root ownership on every response, including cache hits, so older misattributed rows cannot leak after a nested registration.
+
+The scoped `context_fingerprint` covers the visible project roots and all nested exclusions. An unrelated registration leaves it unchanged; changing roots or nested ownership invalidates old contexts and both search and local-answer caches. No snapshot history is required. Legacy global `registry_fingerprint` requests are accepted only while that fingerprint equals the current registry; global search requires no client fingerprint and uses only the current server registry.
+
+Explicit `global_search=true` calls the existing ACL-scoped retrieval independently per project, including rootless knowledge. Batches have at most two active project calls, one shared deadline and global result/graph limits. Results carry project/root provenance. Full success requires every project to complete; otherwise the response is `partial` and `unavailable`, never a complete `rag_answer`. Per-project L1/L2 caches and all SQL ACL predicates remain in force.
 
 ## Security Scope
 
@@ -112,12 +118,16 @@ Test fixtures participate only when the question explicitly concerns tests
 retrieval time, including old index rows. A benchmark question is not evidence
 answering itself. Identifier-property checks include single-word properties.
 
-The watchdog has one worker, at most 500 pending paths and three attempts per event.
-It reconciles metadata at startup and every five minutes, up to 10,000 files;
-ignored directories and symlinks are excluded. A full queue is recovered on the
-next scan. Its private `.rag-index-state.json` acknowledges only successful,
-unchanged source versions. Reconciliation resumes after restart. Model weights,
-artifacts and evaluation fixtures are never indexed by this watcher.
+The watchdog supervisor dynamically reconciles every registered project/root at
+startup and every five minutes without restarting. One shared worker drains per-root
+queues (at most 500 pending paths each), with three attempts per event and up to
+10,000 files per root scan. New roots join automatically; changed roots are rewatched;
+removed roots stop future work without deleting knowledge. Separately registered
+nested roots are pruned from parent events and reconciliation. Ignored directories,
+symlinks, model weights, artifacts and evaluation fixtures are never indexed. Its
+private `.rag-index-state.json` acknowledges only successful, unchanged source
+versions. The central HTTP engine owns the single ML runtime; watchers instantiate
+no per-project models.
 
 ## Intel Arc execution contract (2026-10-29)
 

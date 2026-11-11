@@ -4,7 +4,8 @@ import pytest
 
 pytest.importorskip("watchdog")
 
-from project_context import ProjectContext, ReadScope, WriteVisibility
+from config import settings
+from project_context import ProjectContext, ProjectDefinition, ProjectRegistry, ReadScope, WriteVisibility
 from watchdog_indexer import BASE_DIR, DebouncedIndexer
 
 pytestmark = pytest.mark.unit
@@ -33,18 +34,15 @@ class FakeClient:
         return {"status": "success"}
 
 
-def context(tmp_path):
-    return ProjectContext(
-        "project-a",
-        "Project A",
-        "root-a",
-        str(tmp_path),
-        (str(tmp_path),),
-        WriteVisibility.SHARED,
-        ReadScope.SHARED,
-        "watchdog",
-        "service",
+def make_indexer(tmp_path, client):
+    context = ProjectContext(
+        "project-a", "Project A", "root-a", str(tmp_path), (str(tmp_path),),
+        WriteVisibility.SHARED, ReadScope.SHARED, "watchdog", "service",
     )
+    registry = ProjectRegistry([
+        ProjectDefinition("project-a", "Project A", {"root-a": tmp_path})
+    ])
+    return DebouncedIndexer(client, context, registry)
 
 
 def test_valid_move_uses_single_server_side_operation(tmp_path):
@@ -52,7 +50,7 @@ def test_valid_move_uses_single_server_side_operation(tmp_path):
     destination = tmp_path / "new.py"
     destination.write_text("print('fixture')", encoding="utf-8")
     client = FakeClient()
-    indexer = DebouncedIndexer(client, context(tmp_path))
+    indexer = make_indexer(tmp_path, client)
 
     indexer._process_now("move", str(source), str(destination))
 
@@ -66,7 +64,7 @@ def test_move_to_ignored_destination_only_deletes_scoped_source(tmp_path):
     destination = hidden / "new.py"
     destination.write_text("print('fixture')", encoding="utf-8")
     client = FakeClient()
-    indexer = DebouncedIndexer(client, context(tmp_path))
+    indexer = make_indexer(tmp_path, client)
 
     indexer._process_now("move", str(source), str(destination))
 
@@ -78,7 +76,7 @@ def test_failed_atomic_move_never_falls_back_to_delete(tmp_path):
     destination = tmp_path / "new.py"
     destination.write_text("print('fixture')", encoding="utf-8")
     client = FakeClient(move_result={"status": "error", "moved_count": 0})
-    indexer = DebouncedIndexer(client, context(tmp_path))
+    indexer = make_indexer(tmp_path, client)
 
     indexer._process_now("move", str(source), str(destination))
 
@@ -89,7 +87,7 @@ def test_delayed_delete_indexes_a_recreated_file(tmp_path):
     path = tmp_path / "recreated.py"
     path.write_text("value = 42\n")
     client = FakeClient()
-    indexer = DebouncedIndexer(client, context(tmp_path))
+    indexer = make_indexer(tmp_path, client)
     assert indexer._process_now("delete", str(path)) is True
     assert [call[0] for call in client.calls] == ["index_code"]
 
@@ -98,4 +96,4 @@ def test_fallback_does_not_depend_on_a_developer_home():
     source = (Path(BASE_DIR) / "watchdog_indexer.py").read_text(encoding="utf-8")
 
     assert 'Path("/home/' not in source
-    assert "Path(__file__).resolve().parent" in source
+    assert BASE_DIR == settings.project_root

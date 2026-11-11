@@ -11,7 +11,14 @@ from typing import Any
 
 from config import settings
 from local_inference import correlation_id
-from project_context import KnowledgeContext, ProjectContext
+from project_context import (
+    GlobalKnowledgeContext,
+    KnowledgeContext,
+    ProjectContext,
+    WorkingDirectoryContext,
+)
+
+RequestContext = ProjectContext | KnowledgeContext | WorkingDirectoryContext | GlobalKnowledgeContext
 
 log = logging.getLogger("rag_client")
 
@@ -25,12 +32,12 @@ class RagProtocolError(RuntimeError):
 class RagClient:
     def __init__(
         self,
-        context: ProjectContext | KnowledgeContext,
+        context: RequestContext,
         model_name: str = "",
         server_url: str = "",
     ) -> None:
-        if not isinstance(context, (ProjectContext, KnowledgeContext)):
-            raise TypeError("RagClient requires a validated ProjectContext or KnowledgeContext")
+        if not isinstance(context, (ProjectContext, KnowledgeContext, WorkingDirectoryContext, GlobalKnowledgeContext)):
+            raise TypeError("RagClient requires a validated ProjectContext or search context")
         self.context = context
         self.model_name = model_name
         self.server_url = server_url or settings.rag_server_url
@@ -53,13 +60,13 @@ class RagClient:
 
     def _base_payload(
         self,
-        context: ProjectContext | KnowledgeContext | None = None,
+        context: RequestContext | None = None,
         *,
         allow_knowledge_context: bool = False,
     ) -> dict[str, Any]:
         current = context or self.context
-        if isinstance(current, KnowledgeContext) and not allow_knowledge_context:
-            raise TypeError("This operation requires a filesystem-capable ProjectContext")
+        if isinstance(current, (KnowledgeContext, GlobalKnowledgeContext)) and not allow_knowledge_context:
+            raise TypeError("This operation requires a filesystem-capable context")
         return {"context": current.to_request_dict()}
 
     def search(
@@ -67,7 +74,7 @@ class RagClient:
         query: str,
         limit: int = 5,
         *,
-        context: ProjectContext | KnowledgeContext | None = None,
+        context: RequestContext | None = None,
     ) -> dict:
         query = self._require_text("query", query, settings.max_query_chars)
         limit = self._require_range("limit", limit, 1, settings.max_search_limit)
@@ -98,9 +105,11 @@ class RagClient:
         self,
         prompt_hash: str,
         *,
-        context: ProjectContext | KnowledgeContext | None = None,
+        context: RequestContext | None = None,
     ) -> dict:
         current = context or self.context
+        if isinstance(current, GlobalKnowledgeContext):
+            raise TypeError("Local answer cache requires one project context")
         payload = self._base_payload(current, allow_knowledge_context=True)
         payload["prompt_hash"] = prompt_hash
         return self._post("/answer-cache/lookup", payload, current.session_id, timeout=2.0)
@@ -111,9 +120,11 @@ class RagClient:
         answer: str,
         expected_generation: int,
         *,
-        context: ProjectContext | KnowledgeContext | None = None,
+        context: RequestContext | None = None,
     ) -> dict:
         current = context or self.context
+        if isinstance(current, GlobalKnowledgeContext):
+            raise TypeError("Local answer cache requires one project context")
         payload = self._base_payload(current, allow_knowledge_context=True)
         payload.update(
             {
@@ -129,7 +140,7 @@ class RagClient:
         query: str,
         limit: int = 5,
         *,
-        context: ProjectContext | KnowledgeContext | None = None,
+        context: RequestContext | None = None,
         max_depth: int = 2,
         max_entities: int = 20,
         max_relations: int = 36,
@@ -353,6 +364,12 @@ class RagClient:
                 return self._validate_response(endpoint, response.read())
         except urllib.error.HTTPError as exc:
             # Do not echo response bodies: upstream errors may contain sensitive data.
+            if exc.code in (403, 422):
+                return {
+                    "status": "error",
+                    "code": "CONTEXT_NOT_AUTHORIZED" if exc.code == 403 else "INVALID_CONTEXT",
+                    "message": "Client context is missing, unknown, ambiguous or no longer authorized",
+                }
             backend_status = "unavailable" if exc.code == 503 else "error"
             return {"status": backend_status, "message": f"HTTP {exc.code}"}
         except TimeoutError:

@@ -23,8 +23,10 @@ def main():
     cases = json.loads(cases_path.read_text())
     if len(cases) > 100:
         parser.error("At most 100 cases per bounded pass")
-    context = build_default_project_context(settings, agent_id="retrieval-evaluation",
-                                            session_id="retrieval-evaluation-20261029", read_scope="shared")
+    context = build_default_project_context(
+        settings, agent_id="retrieval-evaluation", working_directory=str(Path.cwd()),
+        session_id="retrieval-evaluation-20261029", read_scope="shared",
+    )
     rows = []
     for case in cases:
         start = time.monotonic()

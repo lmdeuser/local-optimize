@@ -79,7 +79,7 @@ def test_readiness_fails_closed_during_a_half_finished_reembed(monkeypatch):
     """A partly re-embedded store must not answer queries at all."""
     engine = build_engine([])
     monkeypatch.setattr(
-        "migration_runner.verify_runtime_schema", lambda _conn: True
+        "migration_runner.verify_runtime_schema", lambda _conn, **_kwargs: True
     )
     engine.embedding_consistency = lambda: {"consistent": False, "mismatched_rows": 224}
 
@@ -89,7 +89,7 @@ def test_readiness_fails_closed_during_a_half_finished_reembed(monkeypatch):
 def test_readiness_passes_when_the_store_is_uniform(monkeypatch):
     engine = build_engine([])
     monkeypatch.setattr(
-        "migration_runner.verify_runtime_schema", lambda _conn: True
+        "migration_runner.verify_runtime_schema", lambda _conn, **_kwargs: True
     )
     engine.embedding_consistency = lambda: {"consistent": True, "mismatched_rows": 0}
 

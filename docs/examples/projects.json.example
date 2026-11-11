@@ -2,11 +2,23 @@
   "version": 1,
   "projects": [
     {
-      "project_id": "local-optimize",
-      "project_name": "Local Optimize",
+      "project_id": "parent-project",
+      "project_name": "Parent Project",
       "roots": {
-        "primary": "/absolute/path/to/local-optimize"
+        "primary": "/absolute/path/to/parent-project"
       }
+    },
+    {
+      "project_id": "nested-project",
+      "project_name": "Nested Project With Exclusive Ownership",
+      "roots": {
+        "primary": "/absolute/path/to/parent-project/nested-project"
+      }
+    },
+    {
+      "project_id": "shared-notes",
+      "project_name": "Rootless Knowledge Only",
+      "roots": {}
     }
   ]
 }
