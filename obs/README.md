@@ -20,12 +20,12 @@ The script copies only tracked source files, then creates the complete runtime i
 
 - `local-optimize_1.0.1.orig.tar.gz` with source and manifests;
 - multiple `local-optimize_1.0.1.orig-runtime-*.tar.gz` components with the generated venv and pinned models;
-- `local-optimize_1.0.1-0ubuntu2.dsc` and `local-optimize_1.0.1-0ubuntu2.debian.tar.xz`;
+- `local-optimize_1.0.1-0ubuntu3.dsc` and `local-optimize_1.0.1-0ubuntu3.debian.tar.xz`;
 - source changes files.
 
 Components are limited to 512 MiB before compression so OBS does not have to accept one multi-gigabyte request. Oversized files are split and reassembled with SHA-256 verification during the OBS build. Upload the main orig tar, every runtime component, Debian tar and `.dsc`. Never upload secrets, agent configuration or unrelated local artifacts.
 
-For a separate local binary verification run `packaging/build-deb.sh` without `SOURCE_ONLY` and then `lintian artifacts/debian/local-optimize_1.0.1-0ubuntu2_amd64.deb`.
+For a separate local binary verification run `packaging/build-deb.sh` without `SOURCE_ONLY` and then `lintian artifacts/debian/local-optimize_1.0.1-0ubuntu3_amd64.deb`.
 
 ## Create or update OBS metadata
 
@@ -46,14 +46,14 @@ osc -A https://api.opensuse.org checkout \
   home:dwolfF:local-optimize/local-optimize \
   -o artifacts/obs/local-optimize
 cp artifacts/debian/local-optimize_1.0.1*.tar.gz \
-   artifacts/debian/local-optimize_1.0.1-0ubuntu2.dsc \
-   artifacts/debian/local-optimize_1.0.1-0ubuntu2.debian.tar.xz \
+   artifacts/debian/local-optimize_1.0.1-0ubuntu3.dsc \
+   artifacts/debian/local-optimize_1.0.1-0ubuntu3.debian.tar.xz \
    artifacts/obs/local-optimize/
 cd artifacts/obs/local-optimize
 osc add local-optimize_1.0.1*.tar.gz \
-        local-optimize_1.0.1-0ubuntu2.dsc \
-        local-optimize_1.0.1-0ubuntu2.debian.tar.xz
-osc commit -m "Build local-optimize 1.0.1-0ubuntu2 for Ubuntu 26.04"
+        local-optimize_1.0.1-0ubuntu3.dsc \
+        local-optimize_1.0.1-0ubuntu3.debian.tar.xz
+osc commit -m "Build local-optimize 1.0.1-0ubuntu3 for Ubuntu 26.04"
 ```
 
 Inspect results and logs:

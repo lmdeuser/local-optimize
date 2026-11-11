@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 
@@ -94,3 +95,107 @@ def test_manifest_depth_limit_is_enforced(tmp_path, monkeypatch):
     monkeypatch.setattr(manager, "MANIFEST_FILE", manifest)
     with pytest.raises(ValueError, match="nesting depth"):
         manager.load_manifest(strict=True)
+
+
+def test_production_skill_files_are_accessible():
+    manifest = manager.load_manifest(strict=True)
+    assert len(manifest["skills"]) == 39
+    for item in manifest["skills"]:
+        assert manager.safe_skills_path(item["id"]).is_file()
+
+
+def test_production_conditional_skills_have_activation_keywords():
+    manifest = manager.load_manifest(strict=True)
+    missing = [
+        item["id"]
+        for item in manifest["skills"]
+        if not item.get("required") and not item.get("activation_keywords")
+    ]
+    assert missing == []
+
+
+def test_production_markdown_links_resolve():
+    link_pattern = re.compile(r"\[[^]]+\]\(([^)]+)\)")
+    for skill_path in manager.PRIMARY_SKILLS_DIR.glob("*.md"):
+        for link in link_pattern.findall(skill_path.read_text(encoding="utf-8")):
+            if "://" in link or link.startswith(("#", "mailto:")):
+                continue
+            target = link.split("#", 1)[0]
+            if target:
+                assert (skill_path.parent / target).resolve().exists(), (skill_path.name, link)
+
+
+def test_core_skills_match_required_manifest_entries():
+    manifest = manager.load_manifest(strict=True)
+    expected = {item["filename"] for item in manifest["skills"] if item.get("required")}
+    assert set(manager.get_core_skills()) == expected
+
+
+def _use_activation_keywords(monkeypatch, keywords):
+    monkeypatch.setattr(
+        manager,
+        "load_manifest",
+        lambda strict=True: {
+            "skills": [
+                {
+                    "id": "sample",
+                    "filename": "sample.md",
+                    "required": False,
+                    "activation_keywords": keywords,
+                }
+            ]
+        },
+    )
+
+
+@pytest.mark.parametrize("query", ["requirements", "storage", "open performance review"])
+def test_keywords_do_not_match_inside_other_words(monkeypatch, query):
+    _use_activation_keywords(monkeypatch, ["ts", "rag", "pe"])
+    assert manager.get_conditional_skills(query) == []
+
+
+@pytest.mark.parametrize(
+    ("query", "keywords"),
+    [
+        ("TypeScript", ["typescript"]),
+        ("RAG", ["rag"]),
+        ("C++", ["c++"]),
+        ("reverse   engineering", ["reverse engineering"]),
+    ],
+)
+def test_exact_words_and_phrases_match(monkeypatch, query, keywords):
+    _use_activation_keywords(monkeypatch, keywords)
+    assert manager.get_conditional_skills(query) == ["sample.md"]
+
+
+def test_explicit_prefix_matches_unicode_word_forms(monkeypatch):
+    _use_activation_keywords(monkeypatch, ["миграц*"])
+    assert manager.get_conditional_skills("проверь миграции") == ["sample.md"]
+    assert manager.get_conditional_skills("проверь данные") == []
+
+
+@pytest.mark.parametrize(
+    ("query", "unexpected"),
+    [
+        ("проверь requirements", "javascript-typescript-engineering.md"),
+        ("опиши storage", "llm-rag-engineering.md"),
+        ("open performance review", "reverse-engineering.md"),
+    ],
+)
+def test_production_router_rejects_known_false_positives(query, unexpected):
+    assert unexpected not in manager.get_conditional_skills(query)
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("исправь баг в Python", "python-engineering.md"),
+        ("проверь миграции PostgreSQL", "postgres-engineering.md"),
+        ("RAG и TypeScript с C++", "llm-rag-engineering.md"),
+        ("RAG и TypeScript с C++", "javascript-typescript-engineering.md"),
+        ("RAG и TypeScript с C++", "cpp-engineering.md"),
+        ("проверь совместимость C++20", "cpp-engineering.md"),
+    ],
+)
+def test_production_router_matches_bilingual_queries(query, expected):
+    assert expected in manager.get_conditional_skills(query)

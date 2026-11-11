@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import sys
 import time
@@ -149,6 +150,22 @@ def get_core_skills() -> list[str]:
     return [item["filename"] for item in load_manifest(strict=True)["skills"] if item.get("required")]
 
 
+def _keyword_matches(query: str, keyword: object) -> bool:
+    normalized = str(keyword).strip().lower()
+    if not normalized:
+        return False
+    prefix_match = normalized.endswith("*") and len(normalized) > 1
+    base = normalized[:-1] if prefix_match else normalized
+    if not base:
+        return False
+    body = r"\s+".join(re.escape(part) for part in base.split())
+    pattern = rf"(?<!\w){body}"
+    if prefix_match:
+        pattern += r"\w*"
+    pattern += r"(?!\w)"
+    return re.search(pattern, query) is not None
+
+
 def get_conditional_skills(query: str = "") -> list[str]:
     if not query:
         return []
@@ -156,7 +173,7 @@ def get_conditional_skills(query: str = "") -> list[str]:
     return [
         item["filename"]
         for item in load_manifest(strict=True)["skills"]
-        if any(str(keyword).lower() in lowered for keyword in item.get("activation_keywords", []))
+        if any(_keyword_matches(lowered, keyword) for keyword in item.get("activation_keywords", []))
     ]
 
 

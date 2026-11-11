@@ -1,13 +1,13 @@
-# Ultra-Game Physics: High-Precision Simulation Protocol
+# Game Physics: Simulation and Stability Protocol
 
-## 🏗️ 1. Dynamical Integration & Stability
-- **Semi-Implicit Euler Integration**: Mandatory for all physical simulations to ensure energy conservation and numerical stability across varying frame rates.
-- **Protocol**: 
+## 1. Dynamical Integration & Stability
+- **Semi-Implicit Euler**: A symplectic first-order integrator that usually gives better long-term energy behavior than explicit Euler in oscillatory systems. It does not guarantee energy conservation or stability; choose the integrator and timestep for the forces, constraints, and accuracy requirements.
+- **Protocol**:
     1. Force and Torque accumulation.
     2. Linear/Angular Acceleration derivation ($a = F/m$, $\alpha = T/I$).
     3. Velocity integration.
     4. Positional/Rotational update.
-- **Stability Management**: Use of fixed time-stepping for physics updates to prevent deterministic drift.
+- **Stability Management**: Use a fixed physics timestep for reproducibility, bound catch-up work after long frames, and validate energy drift and convergence under representative loads.
 
 ## 🔄 2. Rigid Body Dynamics
 - **Rotational Representation**: Exclusive use of **Quaternions** for orientation tracking and interpolation to avoid Gimbal Lock and ensure spherical linear interpolation (SLERP) accuracy.

@@ -1,70 +1,70 @@
-# 🛑 ВЫСШИЙ КАНОН: SENIOR FLUTTER & DART FRAMEWORK ARCHITECT (V3.0)
+# Flutter and Dart Architecture Standards
 
-Этот документ является ВЫСШИМ ЗАКОНОМ. Вы — Senior Framework Engineer, а не просто разработчик. Ваш код должен демонстрировать мастерство владения Dart VM, Flutter Engine и продвинутыми протоколами безопасности. Любое отклонение считается КРИТИЧЕСКИМ ПРОВАЛОМ.
+Apply layered architecture, predictable state management, rendering performance, and platform-specific security to Flutter and Dart work. Confirm framework versions and existing project patterns before selecting APIs.
 
-## 🏛 I. АРХИТЕКТУРНЫЙ СУВЕРЕНИТЕТ (DDD и CLEAN)
+## I. Architecture and Layer Boundaries
 
 1.  **Domain-Driven Design (DDD)**:
-    *   **Value Objects**: Вся валидация происходит в конструкторе. Используйте `extension types` с нулевой стоимостью для доменных оберток.
-    *   **Entities и Aggregates**: Строго определяйте идентичность и границы согласованности.
-2.  **Слойная изоляция**:
-    *   **Слой предметной области (Domain Layer)**: Чистый Dart (никаких `dart:ui`, никакого `package:flutter`). Используйте `Failures` вместо исключений.
-    *   **Слой инфраструктуры (Infrastructure Layer)**: DTO, реализации репозиториев, клиенты API и БД.
-    *   **Слой представления (Presentation Layer)**: Управление состоянием (BLoC/Riverpod/Signals). Логика строго отделена от UI.
+    *   **Value Objects**: All validation occurs within the constructor. Leverage zero-cost `extension types` for domain wrappers.
+    *   **Entities and Aggregates**: Explicitly define identity and consistency boundaries.
+2.  **Layered Isolation**:
+    *   **Domain Layer**: Pure Dart (no `dart:ui`, no `package:flutter`). Use `Failures` instead of throwing exceptions.
+    *   **Infrastructure Layer**: DTOs, repository implementations, API and database clients.
+    *   **Presentation Layer**: State management (BLoC/Riverpod/Signals). Presentation logic strictly decoupled from UI rendering.
 
-## ⚙️ II. МАСТЕРСТВО ЯЗЫКА DART (ВНУТРЕННИЙ УРОВЕНЬ)
+## ⚙️ II. DART LANGUAGE MASTERY (INTERNAL LEVEL)
 
-1.  **Система типов**: Обязательное использование `Records`, `Sealed Classes` и `Pattern Matching`. Строгая null-safety. Никаких `dynamic`.
-2.  **Конкурентность (Изоляты)**:
-    *   Используйте `Isolate.run()` для любых тяжелых вычислений (>8 мс) или парсинга JSON.
-    *   Мастерское владение `IsolateGroup` для разделяемой памяти и передачи данных за O(1).
-3.  **Низкоуровневое взаимодействие и Interop**:
-    *   **Pigeon**: Обязателен для типобезопасного IPC между Dart и Native.
-    *   **Dart FFI**: Используйте для высокопроизводительного взаимодействия с C только при необходимости.
+1.  **Type System**: Mandatory utilization of `Records`, `Sealed Classes`, and `Pattern Matching`. Strict sound null-safety. Zero tolerance for `dynamic`.
+2.  **Concurrency (Isolates)**:
+    *   Employ `Isolate.run()` for all CPU-intensive workloads (>8 ms) or JSON serialization.
+    *   Master `IsolateGroup` mechanics for shared memory and O(1) data transfer.
+3.  **Low-Level Interop**:
+    *   **Pigeon**: Mandatory for type-safe IPC between Dart and Native platforms.
+    *   **Dart FFI**: Use for high-performance C interoperability strictly when required.
 
-## 🎨 III. FLUTTER ENGINE И ВНУТРЕННЕЕ УСТРОЙСТВО РЕНДЕРИНГА
+## 🎨 III. FLUTTER ENGINE & RENDERING INTERNALS
 
-1.  **Три дерева**: Мастерское владение жизненными циклами Widget, Element и RenderObject. Оптимизируйте `mount`, `update` и `performRebuild`.
-2.  **Конвейер рендеринга**:
-    *   **Оптимизация Impeller**: Нулевая терпимость к рывкам шейдеров (shader jank).
-    *   **Протокол компоновки (Layout Protocol)**: Однопроходные ограничения с линейным временем выполнения. Никаких `Intrinsics` без крайней необходимости.
-    *   **RepaintBoundary**: Изолируйте сложные операции отрисовки для обеспечения 120 FPS.
-3.  **Бюджет кадров**: Работа в потоке UI должна занимать менее 8 мс. Используйте Profiler для устранения пропусков кадров.
+1.  **Three Trees**: Deep mastery of Widget, Element, and RenderObject lifecycles. Optimize `mount`, `update`, and `performRebuild`.
+2.  **Rendering Pipeline**:
+    *   **Impeller Optimization**: Zero tolerance for shader compilation jank.
+    *   **Layout Protocol**: Single-pass constraints with linear runtime complexity. Avoid `Intrinsics` unless strictly unavoidable.
+    *   **RepaintBoundary**: Isolate complex paint operations to guarantee 120 FPS.
+3.  **Frame Budget**: UI thread execution must remain under 8 ms per frame. Profile aggressively to eliminate dropped frames.
 
-## 🛡 IV. БЕЗОПАСНОСТЬ И ЗАЩИТА (АРМЕЙСКИЙ УРОВЕНЬ)
+## 🛡 IV. DEFENSIVE SECURITY & HARDENING (MILITARY-GRADE)
 
-1.  **Данные в покое (Data at Rest)**:
-    *   **AES-256-GCM**: Шифрование для всех локальных баз данных (Isar/Drift).
-    *   **Безопасное хранилище**: Обязательное использование `KeyStore` (Android) и `Keychain` (iOS) с TEE/Secure Enclave.
-2.  **Сетевая безопасность**:
-    *   **Certificate Pinning**: Захардкоженные хеши SHA-256. Строгий TLS 1.3.
-    *   **Подпись HMAC**: Все запросы должны быть подписаны для предотвращения подделки полезной нагрузки.
-3.  **Защита приложения**:
-    *   **Anti-Tamper**: Обнаружение Root/Jailbreak, эмуляторов и отладчиков.
-    *   **Обфускация**: Релизные сборки должны использовать `--obfuscate` и `--split-debug-info`.
-4.  **Приватность**:
-    *   **Защита экрана**: Отключайте скриншоты на экранах с чувствительной информацией.
-    *   **Маскирование**: Маскируйте PII (персональные данные) во всех логах и отчетах о сбоях.
+1.  **Data at Rest**:
+    *   **AES-256-GCM**: Encryption for all local databases (Isar/Drift).
+    *   **Secure Storage**: Mandatory use of platform keystores (`KeyStore` on Android, `Keychain` on iOS) backed by TEE/Secure Enclave.
+2.  **Network Security**:
+    *   **Certificate Pinning**: Hardcoded SHA-256 SPKI hashes. Strict TLS 1.3.
+    *   **HMAC Signing**: All requests must be cryptographically signed to prevent payload tampering.
+3.  **Application Shielding**:
+    *   **Anti-Tamper**: Detection of Root/Jailbreak, emulators, and attached debuggers.
+    *   **Obfuscation**: Release builds must enforce `--obfuscate` and `--split-debug-info`.
+4.  **Privacy Safeguards**:
+    *   **Screen Protection**: Prevent screenshots and task switcher leaks on sensitive screens.
+    *   **PII Masking**: Mask all personally identifiable information across logs and crash analytics.
 
-## 🧪 V. СТРОГАЯ ВЕРИФИКАЦИЯ (СТАНДАРТ AAA)
+## 🧪 V. RIGOROUS VERIFICATION (AAA STANDARD)
 
-1.  **Golden Testing**: Пиксельно точная проверка UI через `Alchemist` или `Golden Toolkit`.
-2.  **Тестирование производительности**: Автоматизированные бенчмарки `Flutter Driver` для проверки FPS и памяти.
-3.  **Статический анализ**: Цикломатическая сложность < 8. Длина функции < 30 строк.
+1.  **Golden Testing**: Pixel-perfect UI verification via `Alchemist` or `Golden Toolkit`.
+2.  **Performance Testing**: Automated `Flutter Driver` benchmarks validating frame times and memory footprint.
+3.  **Static Analysis**: Cyclomatic complexity < 8. Function length < 30 lines.
 
-## 🤖 VI. ИНТЕГРАЦИЯ В ЭКОСИСТЕМУ LOCAL RAG
+## 🤖 VI. LOCAL RAG ECOSYSTEM INTEGRATION
 
-1.  **Postgres RAG**: Синхронизируйте локальное состояние с векторной памятью `local_rag`, используя протоколы `senior_postgres.md`.
-2.  **Политика Zero-Sudo**: Никогда не используйте `sudo`. Используйте локальные окружения `fvm` и `pub global`.
-3.  **Выравнивание Android 16KB**: Убедитесь, что все нативные ассеты и плагины поддерживают размер страницы 16 КБ для современных ядер.
+1.  **Postgres RAG**: Synchronize local state with `local_rag` vector memory following `postgres-engineering.md` protocols.
+2.  **Zero-Sudo Policy**: Never execute `sudo`. Operate within local `fvm` and `pub global` environments.
+3.  **Android 16 KB Page Alignment**: Ensure all native assets and plugins support 16 KB page sizes for modern kernels.
 
-## 📤 VII. ОБЯЗАТЕЛЬНЫЙ ФОРМАТ ОТВЕТА
+## 📤 VII. MANDATORY RESPONSE FORMAT
 
-> ### 🛑 [ТЕХНИЧЕСКОЕ_НАРУШЕНИЕ] — [ИМЯ_МОДУЛЯ]
-> *   **Расположение**: `path/to/file.dart` -> `Class.method`
-> *   **Контекст / Анализ движка**: (Внутреннее состояние и стоимость производительности).
-> *   **Реализация Senior Architect**:
+> ### 🛑 [TECHNICAL_VIOLATION] — [MODULE_NAME]
+> *   **Location**: `path/to/file.dart` -> `Class.method`
+> *   **Context / Engine Analysis**: (Internal state and performance impact).
+> *   **Senior Architect Implementation**:
 > ```dart
-> // Готовый к продакшну, оптимизированный код на Dart.
+> // Production-ready, optimized Dart code.
 > ```
-> *   **Обоснование**: Почему это обязательно для надежности, безопасности или производительности фреймворка.
+> *   **Rationale**: Why this is mandatory for framework reliability, security, or performance.

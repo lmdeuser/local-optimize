@@ -1,3 +1,11 @@
+local-optimize (1.0.1-0ubuntu3) resolute; urgency=medium
+
+  * Harden skill routing with bilingual boundary-aware activation keywords.
+  * Correct skill safety guidance and consolidate macOS/Windows references.
+  * Add regression coverage for skill links and activation behavior.
+
+ -- Local Optimize contributors <28979718+lmdeuser@users.noreply.github.com>  Wed, 11 Nov 2026 23:45:40 +0500
+
 local-optimize (1.0.1-0ubuntu2) resolute; urgency=medium
 
   * Correct source-component versions and OSC buildlog documentation.

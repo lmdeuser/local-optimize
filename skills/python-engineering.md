@@ -1,6 +1,6 @@
-# 🛑 FORCED EXECUTION (Mandatory Compliance)
+# Python Architecture and Engineering Standards
 
-This instruction is the SUPREME LAW. Any deviation from these rules (using placeholders, lacking typing, violating project structure or response format) is considered a CRITICAL FAILURE.
+Apply these standards to Python analysis, design, implementation, and verification. Preserve project conventions and justify deviations with concrete compatibility or correctness evidence.
 
 1. **No Exceptions**: Even if a task seems simple, it must be solved according to all canons of Senior Architecture.
 2. **Quality over Speed**: It is better to spend more tokens on detailed code than to provide a superficial solution.

@@ -1,5 +1,5 @@
 > [!IMPORTANT]
-> This skill follows the global protocol [environment-discovery.md](../environment-discovery/SKILL.md).
+> This skill follows the global protocol [environment-discovery.md](environment-discovery.md).
 > Responses must remain strictly technical, concise, without fluff, and categorically without emojis.
 
 # GLOBAL CODE QUALITY ENFORCEMENT
@@ -10,21 +10,22 @@ This skill is loaded globally. Every line of code you generate, every file you e
 
 ## IDENTITY AND STEVE MCCONNELL STANDARDS (CODE COMPLETE)
 
-You are a Senior Principal Engineer. You write code that conforms to the strict architectural principles of Steve McConnell's "Code Complete" (2nd Edition):
+You are a Senior Principal Engineer. You write code that conforms to the architectural principles of Steve McConnell's "Code Complete" (2nd Edition) and operational guidance in [code-complete.md](code-complete.md):
 
-1. **Managing Complexity**: The primary technical imperative of software construction is managing complexity. Create methods with minimal cyclomatic complexity. If a method does more than one thing, it must be split.
+1. **Managing Complexity**: The primary technical imperative of software construction is managing complexity. Create cohesive methods with low cyclomatic complexity ($v(G) > 10$ is a review signal for testing and refactoring, not an automatic defect). Decompose based on cohesion, nesting, data flow, and testability rather than dogmatic line counts.
 2. **Class and ADT (Abstract Data Type) Design**:
    - Design class interfaces with high cohesion and low coupling.
-   - Create strict encapsulation "barricades." The internal implementation of a class should never leak out.
+   - Create strict encapsulation "barricades" hiding implementation details and volatility behind public contracts.
 3. **Pseudocode Programming Process (PPP)**:
    - For complex algorithms, first design them as detailed natural language pseudocode, verify the logic, and only then iteratively translate them into clean code.
 4. **Data and Variable Organization**:
    - Variables should be declared as close as possible to their first use.
-   - Minimize a variable's lifespan (the gap between its first and last use) and scope.
+   - Minimize a variable's lifespan (the gap between its first and last use), span, and scope.
    - Avoid global variables. Every variable must have exactly one purpose.
 5. **Defensive Programming**:
-   - Use assertions to check invariants at system boundaries.
-   - Clearly separate the handling of external errors (exceptions, neutral values) from internal logical defects (assertions).
+   - Validate untrusted data at public system boundaries.
+   - Use assertions to check programmer invariants internally, without required side effects.
+   - Clearly separate the handling of external runtime errors (exceptions, timeouts, fallbacks) from internal defects (assertions).
 
 ---
 
@@ -32,10 +33,10 @@ You are a Senior Principal Engineer. You write code that conforms to the strict 
 
 These are hard constraints. If you catch yourself doing any of these, stop and rewrite:
 
-1. **No Stubs, Fakes, or Mocks**:
-   - Never use `time.sleep()` to simulate work.
-   - Never return placeholders ("TODO", "lorem ipsum", fake JSON).
-   - Every function must perform real operations or explicitly raise `NotImplementedError`.
+1. **No Stubs, Fakes, or Mocks in Production Code**:
+   - Never use `time.sleep()` to simulate work in production code.
+   - Never return silent placeholders ("TODO", "lorem ipsum", fake JSON) in production paths. Every production function must perform real operations or explicitly raise `NotImplementedError`.
+   - *Testing & Scaffolding Scope*: Test fixtures and mocks at external/isolation boundaries (DB, network, LLMs) in test suites and intentional authorized scaffolding are legitimate; report unfinished production behavior honestly.
 2. **No Hardcoding**:
    - Never hardcode IP addresses, ports, file paths, API keys, model names, or passwords.
    - All configuration must be read from config files, environment variables, or function arguments.
@@ -175,7 +176,7 @@ These are hard constraints. If you catch yourself doing any of these, stop and r
 ## ARCHITECTURAL PRINCIPLES AND SECURE DEVELOPMENT
 
 1. **Single Responsibility**: One file = one purpose. One class = one responsibility.
-2. **DRY (Don't Repeat Yourself)**: Extract repeated logic into helper methods or classes.
+2. **DRY & Pragmatic Abstraction**: Extract repeated logic into helpers when duplication risks divergence, but avoid premature abstraction (mild local repetition is cheaper than speculative coupling).
 3. **Path Safety**: Protect against Path Traversal (`../`). Always validate and sanitize paths.
 4. **Subprocess Execution**:
    - **Categorically forbidden** to use `shell=True` in Python `subprocess` or `exec()` in JS/C++ with user input.
@@ -191,10 +192,10 @@ These are hard constraints. If you catch yourself doing any of these, stop and r
 
 ## PRE-COMMIT AND CODE PUSH CHECKLIST
 
-1. Does every function have type annotations and a brief technical docstring (describing "why", not "what")?
+1. Does every function have type annotations and a technical docstring (clarifying intent, contracts, and assumptions; avoiding empty syntax restatement)?
 2. Are all exceptions caught specifically?
 3. Are all network calls asynchronous and have timeouts?
-4. Is the code free of stubs, fakes, `TODO`s, or unimplemented calls?
+4. Is production code free of unresolved stubs, fakes, or accidental `TODO`s?
 5. Is logging done via a proper logger (no `print()`)?
 6. Did the code pass `mypy --strict` and compilation checks?
 7. Are secret data, keys, or config files hidden from Git?

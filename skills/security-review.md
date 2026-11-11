@@ -8,13 +8,13 @@
 
 ## Operational Rules
 1. **Configuration Control**: Critical project files (`.env`, `cursor_mcp_config.json`, SQL schemas, and PowerShell launchers) must not be changed without a clear reason and subsequent verification.
-2. **Temporary Data**: Create temporary files in `$env:TEMP` or inside a dedicated project directory and delete them after execution.
+2. **Temporary Data**: Use an explicitly configured per-task scratch directory and clean it up deterministically. Honor `TMPDIR`; use the existing project scratch directory or `~/.local/state/local_optimize` for non-build materials, and a disk-backed task directory under `/srv/temp` for builds unless the project configures another location. Do not default working files, intermediate builds, or logs to shared `/tmp`.
 3. **Risky Actions**: Always request user confirmation for destructive or hard-to-reverse actions:
    - `rm -rf` equivalents for non-temporary directories.
    - Force-push or deleting git branches.
    - Modifying shared system infrastructure.
    - Sending messages to external services (Slack, Email, GitHub PRs).
-4. **Verification**: When implementing security fixes, always verify them using available Windows/Python/SQL commands.
+4. **Verification**: When implementing security fixes, verify them with platform-appropriate Python, SQL, and shell commands.
 
 ## Privacy Protocol
 - Never generate or guess URLs for the user unless they are necessary for programming assistance.

@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "updated_at": "2026-07-26",
+  "updated_at": "2026-11-11",
   "skills": [
     {
       "id": "environment-discovery",
@@ -58,10 +58,37 @@
         "super_code"
       ],
       "activation_keywords": [
-        "код",
+        "code",
         "refactor",
-        "качество",
-        "архитектур"
+        "quality",
+        "architecture"
+      ]
+    },
+    {
+      "id": "code-complete",
+      "filename": "code-complete.md",
+      "required": false,
+      "version": "1.0.0",
+      "description": "Steve McConnell Code Complete Construction Guidance & Engineering Heuristics",
+      "aliases": [
+        "code_complete",
+        "mcconnell",
+        "steve_mcconnell",
+        "construction_guidance"
+      ],
+      "activation_keywords": [
+        "code-complete",
+        "code complete",
+        "mcconnell",
+        "construction",
+        "heuristics",
+        "cyclomatic",
+        "refactoring",
+        "макконнелл",
+        "конструирование",
+        "эвристики",
+        "цикломатическая",
+        "рефакторинг"
       ]
     },
     {
@@ -79,7 +106,10 @@
         "ast",
         "class",
         "def",
-        "парсер"
+        "parser",
+        "питон*",
+        "пайтон*",
+        "парсер*"
       ]
     },
     {
@@ -93,10 +123,17 @@
       ],
       "activation_keywords": [
         "postgres",
+        "postgresql",
         "sql",
         "db",
         "database",
-        "миграц"
+        "migration",
+        "миграц*",
+        "база данных",
+        "базы данных",
+        "субд",
+        "индекс*",
+        "транзакц*"
       ]
     },
     {
@@ -110,11 +147,14 @@
       ],
       "activation_keywords": [
         "bash",
-        "sh",
         "shell",
-        "команд",
-        "run",
-        "cli"
+        "cli",
+        "shell script",
+        "баш",
+        "шелл",
+        "командная строка",
+        "терминал",
+        "скрипт"
       ]
     },
     {
@@ -130,7 +170,9 @@
         "docker",
         "container",
         "dockerfile",
-        "контейнер"
+        "compose",
+        "докер",
+        "контейнер*"
       ]
     },
     {
@@ -147,7 +189,9 @@
         "endpoint",
         "route",
         "http",
-        "api"
+        "api",
+        "эндпоинт*",
+        "маршрут*"
       ]
     },
     {
@@ -158,6 +202,16 @@
       "description": "Android Development & 16KB Page Protocols",
       "aliases": [
         "senior_android"
+      ],
+      "activation_keywords": [
+        "android",
+        "compose",
+        "gradle",
+        "ndk",
+        "adb",
+        "apk",
+        "aar",
+        "андроид"
       ]
     },
     {
@@ -168,6 +222,17 @@
       "description": "Authorized Red Team Assessment Standards",
       "aliases": [
         "red_team_auth"
+      ],
+      "activation_keywords": [
+        "red team",
+        "red-team",
+        "pentest",
+        "exploit",
+        "ctf",
+        "offensive security",
+        "пентест",
+        "красная команда",
+        "эксплойт*"
       ]
     },
     {
@@ -178,6 +243,19 @@
       "description": "C++ Modern System Engineering",
       "aliases": [
         "senior_cpp"
+      ],
+      "activation_keywords": [
+        "cpp",
+        "c++",
+        "c++17",
+        "c++20",
+        "c++23",
+        "cmake",
+        "raii",
+        "asan",
+        "ubsan",
+        "с++",
+        "плюсы"
       ]
     },
     {
@@ -188,6 +266,17 @@
       "description": "External Documentation Retrieval Protocol",
       "aliases": [
         "docs_lookup"
+      ],
+      "activation_keywords": [
+        "documentation",
+        "docs",
+        "manual",
+        "api reference",
+        "specification",
+        "документац*",
+        "мануал",
+        "справка",
+        "руководство"
       ]
     },
     {
@@ -198,6 +287,17 @@
       "description": "Flutter Cross-Platform Architecture",
       "aliases": [
         "senior_flutter"
+      ],
+      "activation_keywords": [
+        "flutter",
+        "dart",
+        "widget",
+        "state management",
+        "bloc",
+        "riverpod",
+        "флаттер",
+        "дарт",
+        "виджет*"
       ]
     },
     {
@@ -208,6 +308,19 @@
       "description": "Game Physics & Simulation Systems",
       "aliases": [
         "ultra_game_physics"
+      ],
+      "activation_keywords": [
+        "physics",
+        "simulation",
+        "collision",
+        "euler",
+        "verlet",
+        "gjk",
+        "rigid body",
+        "физика",
+        "симуляц*",
+        "коллизи*",
+        "столкновен*"
       ]
     },
     {
@@ -218,6 +331,20 @@
       "description": "Git Version Control & Workflow Management",
       "aliases": [
         "senior_git"
+      ],
+      "activation_keywords": [
+        "git",
+        "commit",
+        "branch",
+        "rebase",
+        "merge",
+        "github",
+        "gitlab",
+        "гит",
+        "коммит*",
+        "ветк*",
+        "ребейз",
+        "слияни*"
       ]
     },
     {
@@ -228,6 +355,19 @@
       "description": "Graphics & Shading System Architecture",
       "aliases": [
         "ultra_graphics_architect"
+      ],
+      "activation_keywords": [
+        "graphics",
+        "rendering",
+        "shader",
+        "gpu",
+        "vulkan",
+        "opengl",
+        "metal",
+        "directx",
+        "графика",
+        "рендер*",
+        "шейдер*"
       ]
     },
     {
@@ -238,6 +378,21 @@
       "description": "Hardware Analysis & Manifesto Protocols",
       "aliases": [
         "hardware_agent_manifesto"
+      ],
+      "activation_keywords": [
+        "hardware",
+        "embedded",
+        "pcb",
+        "microcontroller",
+        "i2c",
+        "spi",
+        "uart",
+        "firmware",
+        "железо",
+        "микроконтроллер*",
+        "плата",
+        "схемотехника",
+        "периферия"
       ]
     },
     {
@@ -248,6 +403,19 @@
       "description": "JavaScript & TypeScript Frontend Architecture",
       "aliases": [
         "senior_js"
+      ],
+      "activation_keywords": [
+        "javascript",
+        "typescript",
+        "js",
+        "ts",
+        "node",
+        "nodejs",
+        "npm",
+        "esm",
+        "zod",
+        "джаваскрипт",
+        "тайпскрипт"
       ]
     },
     {
@@ -258,6 +426,16 @@
       "description": "Kotlin JVM & Mobile Engineering",
       "aliases": [
         "senior_kotlin"
+      ],
+      "activation_keywords": [
+        "kotlin",
+        "coroutine",
+        "kotlin flow",
+        "ktor",
+        "jvm",
+        "jni",
+        "котлин",
+        "корутин*"
       ]
     },
     {
@@ -268,6 +446,20 @@
       "description": "LLM & RAG Architecture Protocols",
       "aliases": [
         "senior_llm_engineer"
+      ],
+      "activation_keywords": [
+        "llm",
+        "rag",
+        "embedding",
+        "chunking",
+        "inference",
+        "vram",
+        "ретрив*",
+        "эмбеддинг*",
+        "чанк*",
+        "векторный поиск",
+        "локальная модель",
+        "языковая модель"
       ]
     },
     {
@@ -278,6 +470,18 @@
       "description": "macOS Development & Security Architecture",
       "aliases": [
         "senior_macos_expert"
+      ],
+      "activation_keywords": [
+        "macos",
+        "mac os",
+        "darwin",
+        "homebrew",
+        "brew",
+        "launchd",
+        "xcode",
+        "apple",
+        "макос",
+        "мак"
       ]
     },
     {
@@ -288,6 +492,21 @@
       "description": "Network Protocols & Socket Engineering",
       "aliases": [
         "ultra_network_protocol"
+      ],
+      "activation_keywords": [
+        "network protocol",
+        "udp",
+        "tcp",
+        "packet",
+        "serialization",
+        "protocol",
+        "latency",
+        "netcode",
+        "сетевой протокол",
+        "сериализац*",
+        "пакет*",
+        "задержка сети",
+        "синхронизация состояния"
       ]
     },
     {
@@ -298,6 +517,17 @@
       "description": "Prompt Optimization & System Directives",
       "aliases": [
         "prompt_engineer"
+      ],
+      "activation_keywords": [
+        "prompt engineering",
+        "few-shot",
+        "chain of thought",
+        "cot",
+        "react pattern",
+        "structured output",
+        "промпт*",
+        "инструкц*",
+        "рассужден*"
       ]
     },
     {
@@ -308,6 +538,20 @@
       "description": "Reverse Engineering & Disassembly Protocols",
       "aliases": [
         "ida_expert"
+      ],
+      "activation_keywords": [
+        "reverse engineering",
+        "ida",
+        "idapython",
+        "disasm",
+        "decompile",
+        "binary analysis",
+        "pe",
+        "elf",
+        "реверс*",
+        "декомпил*",
+        "дизассембл*",
+        "бинарный анализ"
       ]
     },
     {
@@ -318,6 +562,18 @@
       "description": "Rust Systems Programming Standards",
       "aliases": [
         "senior_rust"
+      ],
+      "activation_keywords": [
+        "rust",
+        "cargo",
+        "borrow checker",
+        "lifetime",
+        "unsafe",
+        "tokio",
+        "раст",
+        "карго",
+        "владение",
+        "лайфтайм*"
       ]
     },
     {
@@ -328,6 +584,14 @@
       "description": "Dynamic Tool Selection Protocols",
       "aliases": [
         "select_tools"
+      ],
+      "activation_keywords": [
+        "tool selection",
+        "ripgrep",
+        "mcp routing",
+        "выбор инструмента",
+        "инструмент*",
+        "утилит*"
       ]
     },
     {
@@ -338,6 +602,17 @@
       "description": "Ubuntu & Linux Administration Architecture",
       "aliases": [
         "ultra_ubuntu_expert"
+      ],
+      "activation_keywords": [
+        "ubuntu",
+        "linux",
+        "debian",
+        "apt",
+        "systemd",
+        "netplan",
+        "убунту",
+        "линукс",
+        "дебиан"
       ]
     },
     {
@@ -348,6 +623,17 @@
       "description": "Windows System Engineering Protocols",
       "aliases": [
         "senior_windows_expert"
+      ],
+      "activation_keywords": [
+        "windows",
+        "powershell",
+        "wsl",
+        "registry",
+        "batch",
+        "виндовс",
+        "винда",
+        "пауэршелл",
+        "реестр"
       ]
     },
     {
@@ -363,11 +649,13 @@
       ],
       "activation_keywords": [
         "context7",
-        "docs",
-        "документация",
-        "библиотека",
+        "library documentation",
+        "framework documentation",
+        "library",
         "sdk",
-        "api_docs"
+        "api_docs",
+        "документация библиотеки",
+        "документация фреймворка"
       ]
     },
     {
@@ -384,11 +672,17 @@
       "activation_keywords": [
         "sentinel",
         "blue_team",
-        "инцидент",
-        "оборона",
+        "blue team",
+        "incident",
+        "defense",
         "mitre",
         "d3fend",
-        "ioc"
+        "ioc",
+        "харденинг",
+        "инцидент*",
+        "оборона",
+        "мониторинг логов",
+        "реагирование"
       ]
     },
     {
@@ -403,13 +697,19 @@
         "performance_tuning"
       ],
       "activation_keywords": [
-        "память",
-        "процесс",
+        "memory",
+        "process",
         "gpu",
         "vram",
         "ram",
         "resource",
-        "limits"
+        "limits",
+        "performance tuning",
+        "ресурс*",
+        "память",
+        "процесс*",
+        "производительность",
+        "нагрузка"
       ]
     },
     {
@@ -424,10 +724,13 @@
         "skill_authoring"
       ],
       "activation_keywords": [
-        "создать скил",
-        "новый скил",
         "create skill",
-        "skill format"
+        "new skill",
+        "skill format",
+        "создать скил*",
+        "новый скил*",
+        "формат скила",
+        "регистрация скила"
       ]
     },
     {
@@ -441,10 +744,16 @@
         "sec_code_audit"
       ],
       "activation_keywords": [
-        "аудит кода",
+        "code audit",
         "security review",
+        "code review",
+        "vulnerability check",
+        "sast",
+        "аудит кода",
         "код ревью",
-        "проверка уязвимостей"
+        "проверка уязвимост*",
+        "уязвимост*",
+        "безопасность кода"
       ]
     },
     {
@@ -459,11 +768,18 @@
         "static_analysis"
       ],
       "activation_keywords": [
-        "баги",
-        "ошибки",
+        "bugs",
+        "errors",
         "bugbot",
         "static analysis",
-        "поиск багов"
+        "bug search",
+        "баг",
+        "баги",
+        "багов",
+        "ошибк*",
+        "статический анализ",
+        "поиск багов",
+        "дефект*"
       ]
     },
     {
@@ -478,12 +794,15 @@
         "dependency_setup"
       ],
       "activation_keywords": [
-        "окружение",
-        "setup",
-        "установка",
-        "зависимости",
         "environment",
-        "venv"
+        "setup",
+        "installation",
+        "dependencies",
+        "venv",
+        "окружен*",
+        "установка",
+        "зависимост*",
+        "виртуальное окружение"
       ]
     },
     {
@@ -501,9 +820,11 @@
         "security audit",
         "pentest",
         "vulnerability assessment",
-        "безопасность",
-        "аудит",
-        "пентест"
+        "security",
+        "audit",
+        "аудит безопасности",
+        "оценка защищенности",
+        "проверка безопасности"
       ]
     }
   ]

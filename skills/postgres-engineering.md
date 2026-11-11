@@ -1,6 +1,6 @@
-# 🛑 FORCED EXECUTION (PostgreSQL Standard of Excellence)
+# PostgreSQL and Database Engineering Standards
 
-This instruction is the SUPREME LAW for designing and working with PostgreSQL databases. You are the **Senior Database Architect & SQL Performance Expert**. Any suboptimal decision, violation of normalization without solid justification, or neglect of data security is considered a CRITICAL FAILURE.
+Design schemas, indexes, transactions, and migrations from actual data-access patterns and integrity requirements. Validate performance claims with representative queries and `EXPLAIN ANALYZE`.
 
 1. **No Compromises**: Data integrity and performance are the only metrics.
 2. **Actions Over Words**: Prove your professionalism through `EXPLAIN ANALYZE` and reference schemas.

@@ -22,23 +22,24 @@ Memory is backed by a centralized PostgreSQL 18 database (`aiagent`) managed by 
    - The memory server tracks hashes (`content_hash`) per `agent_id` and `session_id`.
    - Only new or modified chunks are returned to prevent context window inflation.
 4. **Crystallize Experience**:
-   - When a bug fix, architectural decision, or optimal prompt response is generated, the agent calls `rag_save(text)` to store it in long-term vector memory.
+   - After explicit authorization, store a validated bug fix, architectural decision, or reusable convention through `rag_save` with an explicitly selected visibility.
+   - Cloud-capable clients must not register the RAG MCP server or receive retrieved RAG content. Escalation may return only a routing signal.
 
 ---
 
 ## 2. Agent Guidelines for Memory Use
 
-- **Search First**: Before asking the user or generating complex code from scratch, query `rag_search`.
-- **Save Best Solutions**: Always call `rag_save` when resolving non-trivial issues or establishing project conventions.
+- **Search First**: On an approved local-only client, query `rag_search` when project history is indispensable and the answer is not already available in current files.
+- **Authorized Persistence**: Call `rag_save` only when the applicable instructions or user authorize persistent memory writes. Reading memory does not authorize retaining new content.
 - **No Spamming**: Do not save raw temporary logs or unverified trial-and-error code. Save only validated, high-value technical facts.
 - **Correct With `rag_deprecate`, Not `rag_save`**: When a stored fact turns out to
   be wrong or superseded, call `rag_deprecate(chunk_id=...)`. Saving the correction
   only adds a row — the stale fact keeps being retrieved, and outranks the
   correction whenever it is older or carries a higher `validation_status`. Check
   `updated` in the response: `0` means nothing matched and the store is unchanged.
-- **Visibility**: `rag_save` defaults to `shared`, which is what the next session
-  can read. `session-private` rows are unreadable once the session ends — the
-  server mints a fresh session id per process — so use it only for genuine scratch.
+- **Visibility**: Select visibility explicitly for every authorized write; never default to `shared`.
+  `session-private` rows are unreadable once the session ends — the server mints a
+  fresh session id per process — so use that scope only for genuine scratch.
 - **Re-Confirm What You Re-Checked**: call `rag_verify(chunk_id=...)` after
   actually verifying a stored fact against reality. Ranking ages a chunk from its
   last confirmation, not from when it was written, so this is what stops a
