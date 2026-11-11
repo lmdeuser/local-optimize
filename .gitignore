@@ -57,7 +57,8 @@ deploy/systemd/
 # Editor, agent and machine-local state
 AGENTS.md
 .agents/
-.claude/
+.claude/*
+!.claude/settings.json
 .cursor/
 .vscode/
 .idea/

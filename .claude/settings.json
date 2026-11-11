@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git:*)",
+      "Bash(gh:*)",
+      "Read(./.git/**)",
+      "Edit(./.git/**)",
+      "Write(./.git/**)",
+      "mcp__git__*",
+      "mcp__github__*"
+    ],
+    "disableBypassPermissionsMode": "disable"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 /home/dennweiss/apps/local_optimize/hooks/deny_git.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
