@@ -1,3 +1,11 @@
+local-optimize (1.0.0-3) resolute; urgency=medium
+
+  * Upgrade MCP SDK to 1.30.0 to address server authentication,
+    cross-origin redirect, schema-reference and session-exhaustion advisories.
+  * Split large source payloads into bounded components for OBS uploads.
+
+ -- Local Optimize contributors <28979718+lmdeuser@users.noreply.github.com>  Wed, 11 Nov 2026 12:30:00 +0500
+
 local-optimize (1.0.0-2) resolute; urgency=medium
 
   * Bundle the Python 3.14 Intel XPU runtime and pinned RAG models.

@@ -2,7 +2,7 @@
 
 ## Что входит в пакет
 
-`local-optimize 1.0.0-2` для Ubuntu 26.04/amd64 устанавливает:
+`local-optimize 1.0.0-3` для Ubuntu 26.04/amd64 устанавливает:
 
 - приложение и переносимое Python 3.14/XPU-окружение в `/usr/lib/local-optimize`;
 - CLI `/usr/bin/local-optimize`;
@@ -20,7 +20,7 @@
 
 ```bash
 packaging/build-deb.sh
-lintian artifacts/debian/local-optimize_1.0.0-2_amd64.deb
+lintian artifacts/debian/local-optimize_1.0.0-3_amd64.deb
 ```
 
 Скрипт копирует только tracked-файлы, создаёт venv и скачивает/копирует модели в изолированный каталог `artifacts/deb-build.*`. `TMPDIR` и pip cache по умолчанию находятся там же и удаляются после сборки. Можно заранее задать `PIP_CACHE_DIR` и `OLLAMA_MODELS_SOURCE` для повторного использования проверенных входов. `packaging/runtime-policy.json` фиксирует revisions и digest; `runtime/manifest.json` в пакете содержит SHA-256 payload.
@@ -32,7 +32,7 @@ lintian artifacts/debian/local-optimize_1.0.0-2_amd64.deb
 После проверки пакета администратор может установить его:
 
 ```bash
-sudo apt install ./artifacts/debian/local-optimize_1.0.0-2_amd64.deb
+sudo apt install ./artifacts/debian/local-optimize_1.0.0-3_amd64.deb
 ```
 
 Затем настройте секреты и реестр проектов по `/usr/share/doc/local-optimize/docs/installation.md`, выполните `local-optimize migrate`, проверьте health и только после этого включите user services. Не создавайте отдельное окружение в `~/.local/share/local-optimize/venv`: CLI использует `/usr/lib/local-optimize/venv`.
