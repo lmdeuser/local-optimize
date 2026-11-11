@@ -118,6 +118,7 @@ chmod 600 "$HOME/.config/local-optimize/projects.json"
 | `RAG_SERVER_PORT` | `8181` |
 | `ALLOWED_INDEX_ROOTS` | Корень проекта; несколько корней разделяются `:`. |
 | `PROJECTS_REGISTRY_FILE` | `~/.config/local-optimize/projects.json` |
+| `LOCAL_OPTIMIZE_STATE_DIR` | `~/.local/state/local-optimize`; inference lock и runtime state. |
 | `MODEL_PATH`, `TOKENIZER_PATH` | `models/multilingual-e5-small` |
 | `RAG_RELEVANCE_FLOOR` | `0.50` |
 | `OLLAMA_HOST` | `127.0.0.1:11434`; разрешён только прямой HTTP loopback. |

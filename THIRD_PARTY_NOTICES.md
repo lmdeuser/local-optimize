@@ -4,7 +4,7 @@
 
 ## Модели
 
-Веса не хранятся в Git. Автономный DEB и его orig tar формируются сборщиком и включают pinned-версии:
+Веса не хранятся в Git. Автономный DEB формируется сборщиком и включает pinned-версии в основном orig tar и `orig-runtime-*` components:
 
 - [intfloat/multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small) — MIT, revision `614241f622f53c4eeff9890bdc4f31cfecc418b3`.
 - [Qwen/Qwen3-Reranker-0.6B](https://huggingface.co/Qwen/Qwen3-Reranker-0.6B) — Apache-2.0, revision `e61197ed45024b0ed8a2d74b80b4d909f1255473`.

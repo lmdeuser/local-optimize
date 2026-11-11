@@ -1,3 +1,10 @@
+local-optimize (1.0.1-0ubuntu2) resolute; urgency=medium
+
+  * Correct source-component versions and OSC buildlog documentation.
+  * Document runtime component packaging and inference state directory.
+
+ -- Local Optimize contributors <28979718+lmdeuser@users.noreply.github.com>  Wed, 11 Nov 2026 14:00:00 +0500
+
 local-optimize (1.0.1-0ubuntu1) resolute; urgency=medium
 
   * Upgrade MCP SDK to 1.30.0 to address server authentication,
