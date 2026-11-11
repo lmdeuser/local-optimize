@@ -1,8 +1,9 @@
-local-optimize (1.0.0-3) resolute; urgency=medium
+local-optimize (1.0.1-0ubuntu1) resolute; urgency=medium
 
   * Upgrade MCP SDK to 1.30.0 to address server authentication,
     cross-origin redirect, schema-reference and session-exhaustion advisories.
   * Split large source payloads into bounded components for OBS uploads.
+  * Use Ubuntu-native versioning for a package not provided by Debian.
 
  -- Local Optimize contributors <28979718+lmdeuser@users.noreply.github.com>  Wed, 11 Nov 2026 12:30:00 +0500
 
