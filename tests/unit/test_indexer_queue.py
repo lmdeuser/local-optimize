@@ -88,3 +88,43 @@ def test_reconciliation_excludes_models_artifacts_and_symlinks(tmp_path):
     queue = IndexQueue(tmp_path, lambda *args: True, is_indexable_path)
     queue.reconcile()
     assert set(queue.pending) == {str(tmp_path / "file.py")}
+
+
+
+def test_reconciliation_requeues_file_after_retry_exhaustion(tmp_path):
+    path = tmp_path / "source.py"
+    path.write_text("fixture")
+    calls = []
+
+    def fail(*args):
+        calls.append(args)
+        return False
+
+    queue = IndexQueue(tmp_path, fail, is_indexable_path, debounce=0)
+    queue.enqueue("modify", str(path))
+    for _ in range(3):
+        assert queue.process_next()
+    assert len(calls) == 3
+    assert queue.pending == {}
+
+    queue.reconcile()
+
+    assert str(path) in queue.pending
+    assert queue.pending[str(path)][3] == 0
+
+
+def test_reconciliation_requeues_file_dropped_by_capacity_limit(tmp_path):
+    first = tmp_path / "first.py"
+    second = tmp_path / "second.py"
+    first.write_text("first")
+    second.write_text("second")
+    queue = IndexQueue(tmp_path, lambda *args: True, is_indexable_path, capacity=1, debounce=0)
+
+    assert queue.enqueue("modify", str(first))
+    assert not queue.enqueue("modify", str(second))
+    assert queue.process_next()
+    assert str(second) not in queue.pending
+
+    queue.reconcile()
+
+    assert str(second) in queue.pending

@@ -1,3 +1,10 @@
+local-optimize (1.0.1-0ubuntu4) resolute; urgency=medium
+
+  * Preserve user-owned and modified Markdown files during skill synchronization.
+  * Reconcile retained watchdog roots to recover queue overflow and exhausted retries.
+
+ -- Local Optimize contributors <28979718+lmdeuser@users.noreply.github.com>  Thu, 12 Nov 2026 02:21:07 +0500
+
 local-optimize (1.0.1-0ubuntu3) resolute; urgency=medium
 
   * Harden skill routing with bilingual boundary-aware activation keywords.

@@ -199,3 +199,65 @@ def test_production_router_rejects_known_false_positives(query, unexpected):
 )
 def test_production_router_matches_bilingual_queries(query, expected):
     assert expected in manager.get_conditional_skills(query)
+
+
+
+def _configure_sync_target(tmp_path, monkeypatch):
+    skills_dir, manifest = _write_catalog(
+        tmp_path,
+        [{"id": "listed", "filename": "listed.md", "required": False, "aliases": []}],
+    )
+    target = tmp_path / "target"
+    target.mkdir()
+    monkeypatch.setattr(manager, "PRIMARY_SKILLS_DIR", skills_dir)
+    monkeypatch.setattr(manager, "MANIFEST_FILE", manifest)
+    monkeypatch.setattr(manager, "SECONDARY_SKILLS_DIRS", [target])
+    return skills_dir, manifest, target
+
+
+def test_sync_preserves_unmanaged_markdown_files(tmp_path, monkeypatch):
+    _skills_dir, _manifest, target = _configure_sync_target(tmp_path, monkeypatch)
+    custom = target / "user-custom.md"
+    custom.write_text("user-owned", encoding="utf-8")
+
+    result = manager.sync_to_targets()[str(target)]
+
+    assert custom.read_text(encoding="utf-8") == "user-owned"
+    assert result["removed"] == []
+    assert result["preserved"] == ["user-custom.md"]
+    assert (target / "listed.md").is_file()
+
+
+def test_sync_removes_only_unchanged_stale_files_it_owns(tmp_path, monkeypatch):
+    skills_dir, manifest, target = _configure_sync_target(tmp_path, monkeypatch)
+    custom = target / "user-custom.md"
+    custom.write_text("user-owned", encoding="utf-8")
+    manager.sync_to_targets()
+    (skills_dir / "listed.md").unlink()
+    manifest.write_text(json.dumps({"version": "1", "skills": []}), encoding="utf-8")
+
+    dry_run = manager.sync_to_targets(dry_run=True)[str(target)]
+    assert dry_run["removed"] == ["listed.md"]
+    assert (target / "listed.md").is_file()
+
+    result = manager.sync_to_targets()[str(target)]
+    assert result["removed"] == ["listed.md"]
+    assert not (target / "listed.md").exists()
+    assert custom.read_text(encoding="utf-8") == "user-owned"
+
+
+def test_sync_preserves_stale_file_modified_by_user(tmp_path, monkeypatch):
+    skills_dir, manifest, target = _configure_sync_target(tmp_path, monkeypatch)
+    manager.sync_to_targets()
+    managed = target / "listed.md"
+    managed.write_text("user changed the deployed copy", encoding="utf-8")
+    (skills_dir / "listed.md").unlink()
+    manifest.write_text(json.dumps({"version": "1", "skills": []}), encoding="utf-8")
+
+    result = manager.sync_to_targets()[str(target)]
+
+    assert result["removed"] == []
+    assert result["preserved"] == ["listed.md"]
+    assert managed.read_text(encoding="utf-8") == "user changed the deployed copy"
+    state = json.loads((target / manager.SYNC_STATE_FILENAME).read_text(encoding="utf-8"))
+    assert state["files"] == {}

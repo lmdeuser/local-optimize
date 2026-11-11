@@ -250,7 +250,7 @@ MCP-сервер (`mcp_server.py`, имя сервера `local-rag`) экспо
   - `load_manifest(strict=True)` валидирует структуру, глубину вложенности JSON и контрольные суммы файлов.
   - `SessionSkillsManager` реализует изолированный LRU-кэш для каждой пары `(agent_id, session_id)` с TTL 1 час (`SESSION_TTL_SECONDS = 3600`).
   - Лимиты безопасности: максимум 10 скиллов на сессию (`MAX_SKILLS_PER_SESSION = 10`), не более 256 КБ на один файл (`MAX_SKILL_BYTES = 262144`), суммарно до 1 МБ на сессию (`MAX_SESSION_BYTES = 1048576`).
-  - `sync_to_targets(clean_stale=True)` синхронизирует канонические скиллы в 4 целевые директории сред разработки (`~/.gemini/antigravity/skills`, `~/.gemini/skills`, `~/.gemini/antigravity-cli/skills`, `~/.cursor/skills`) с удалением устаревших файлов.
+  - `sync_to_targets(clean_stale=True)` синхронизирует канонические скиллы в 4 целевые директории сред разработки (`~/.gemini/antigravity/skills`, `~/.gemini/skills`, `~/.gemini/antigravity-cli/skills`, `~/.cursor/skills`). Ownership-state `.local-optimize-sync.json` позволяет удалять только ранее синхронизированные файлы с совпадающим SHA-256; пользовательские и изменённые файлы сохраняются.
 
 ## Миграции
 

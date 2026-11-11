@@ -232,7 +232,11 @@ class WatchdogSupervisor:
                 self._remove(key)
         for key, context in desired.items():
             if key in self.indexers:
-                self.indexers[key].registry = registry
+                indexer = self.indexers[key]
+                indexer.registry = registry
+                indexer.context = context
+                indexer.client.context = context
+                indexer.queue.reconcile()
                 continue
             indexer = DebouncedIndexer(context=context, registry=registry)
             self.indexers[key] = indexer

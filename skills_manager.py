@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import sys
@@ -289,28 +290,86 @@ def check_discrepancies() -> dict[str, Any]:
     return result
 
 
+SYNC_STATE_FILENAME = ".local-optimize-sync.json"
+
+
+def _load_sync_state(target_dir: Path) -> dict[str, str]:
+    state_path = target_dir / SYNC_STATE_FILENAME
+    if not state_path.is_file() or state_path.is_symlink() or state_path.stat().st_size > 1_000_000:
+        return {}
+    try:
+        data = json.loads(state_path.read_text(encoding="utf-8"))
+        files = data.get("files", {})
+        if data.get("version") != 1 or not isinstance(files, dict):
+            return {}
+        return {
+            name: checksum
+            for name, checksum in files.items()
+            if isinstance(name, str)
+            and Path(name).name == name
+            and name.endswith(".md")
+            and isinstance(checksum, str)
+        }
+    except (ValueError, OSError, TypeError, AttributeError):
+        return {}
+
+
+def _write_sync_state(target_dir: Path, files: dict[str, str]) -> None:
+    state_path = target_dir / SYNC_STATE_FILENAME
+    temporary = state_path.with_suffix(".pending")
+    payload = json.dumps({"version": 1, "files": files}, sort_keys=True, separators=(",", ":"))
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        stream.write(payload)
+    os.replace(temporary, state_path)
+
+
 def sync_to_targets(dry_run: bool = False, clean_stale: bool = True) -> dict[str, Any]:
     primary = inventory_skills()
     result = {}
     for target_dir in SECONDARY_SKILLS_DIRS:
-        details = {"copied": [], "skipped": [], "removed": [], "errors": []}
+        details = {"copied": [], "skipped": [], "removed": [], "preserved": [], "errors": []}
         try:
+            managed = _load_sync_state(target_dir)
+            if target_dir.exists():
+                details["preserved"].extend(
+                    path.name
+                    for path in target_dir.glob("*.md")
+                    if path.name not in primary and path.name not in managed
+                )
             if not dry_run:
                 target_dir.mkdir(parents=True, exist_ok=True)
             for filename, metadata in primary.items():
                 destination = target_dir / filename
                 if destination.exists() and get_file_hash(destination) == metadata["checksum"]:
                     details["skipped"].append(filename)
-                    continue
-                if not dry_run:
-                    shutil.copy2(metadata["path"], destination)
-                details["copied"].append(filename)
+                else:
+                    if not dry_run:
+                        shutil.copy2(metadata["path"], destination)
+                    details["copied"].append(filename)
+                managed[filename] = metadata["checksum"]
             if clean_stale and target_dir.exists():
-                for existing_file in target_dir.glob("*.md"):
-                    if existing_file.name not in primary and not existing_file.is_symlink():
+                for filename, checksum in list(managed.items()):
+                    if filename in primary:
+                        continue
+                    destination = target_dir / filename
+                    if not destination.exists():
+                        managed.pop(filename, None)
+                        continue
+                    if destination.is_symlink():
+                        details["preserved"].append(filename)
+                        managed.pop(filename, None)
+                        continue
+                    if get_file_hash(destination) == checksum:
                         if not dry_run:
-                            existing_file.unlink()
-                        details["removed"].append(existing_file.name)
+                            destination.unlink()
+                        details["removed"].append(filename)
+                    else:
+                        details["preserved"].append(filename)
+                    managed.pop(filename, None)
+            if not dry_run:
+                _write_sync_state(target_dir, managed)
+            details["preserved"] = sorted(set(details["preserved"]))
         except Exception as exc:
             details["errors"].append(str(exc))
         result[str(target_dir)] = details
