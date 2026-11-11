@@ -53,14 +53,14 @@ def build_venv(source_root: Path, destination: Path, python: str, install_root: 
     run([str(venv_python), "-m", "pip", "check"])
     lock = run([str(venv_python), "-m", "pip", "freeze", "--all"], capture_output=True, text=True)
     (destination.parent / "requirements.lock").write_text(lock.stdout, encoding="utf-8")
-    for cache in sorted(destination.rglob("__pycache__"), reverse=True):
-        shutil.rmtree(cache)
-    for bytecode in destination.rglob("*.py[co]"):
-        bytecode.unlink()
     relocate_venv(destination, install_root / "venv")
 
 
 def relocate_venv(venv: Path, installed_venv: Path) -> None:
+    for cache in sorted(venv.rglob("__pycache__"), reverse=True):
+        shutil.rmtree(cache)
+    for bytecode in venv.rglob("*.py[co]"):
+        bytecode.unlink()
     old_prefix = str(venv).encode()
     new_prefix = str(installed_venv).encode()
     for item in venv.rglob("*"):

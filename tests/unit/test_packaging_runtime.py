@@ -24,6 +24,9 @@ def test_relocate_venv_rewrites_shebang_and_removes_build_command(tmp_path):
     upstream = venv / "lib" / "module.py"
     upstream.parent.mkdir()
     upstream.write_text("#!/usr/bin/env/python3\n")
+    cache = venv / "lib" / "__pycache__"
+    cache.mkdir()
+    (cache / "module.cpython-314.pyc").write_bytes(b"bytecode")
     (venv / ".gitignore").write_text("build-only\n")
     (venv / "pyvenv.cfg").write_text(
         "home = /usr/bin\n"
@@ -36,6 +39,7 @@ def test_relocate_venv_rewrites_shebang_and_removes_build_command(tmp_path):
     assert script.read_text().startswith("#!/usr/lib/local-optimize/venv/bin/python\n")
     assert activate.read_text() == "setenv VIRTUAL_ENV '/usr/lib/local-optimize/venv'\n"
     assert upstream.read_text() == "#!/usr/bin/env python3\n"
+    assert not cache.exists()
     assert not (venv / ".gitignore").exists()
     config = (venv / "pyvenv.cfg").read_text()
     assert "command = " not in config
