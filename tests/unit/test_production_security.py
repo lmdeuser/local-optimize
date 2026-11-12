@@ -143,6 +143,35 @@ def test_rag_client_rejects_malformed_or_incomplete_protocol(tmp_path):
         client._validate_response("/search", b'{"status":"ok","results":[]}')
 
 
+def test_rag_client_validates_lifecycle_and_health_endpoints(tmp_path):
+    client = RagClient(_context(tmp_path), server_url="http://fixture.invalid")
+    valid_payloads = {
+        "/deprecate": b'{"status":"success","updated":1,"validation_status":"deprecated"}',
+        "/verify": b'{"status":"success","updated":1}',
+        "/stale_report": b'{"status":"success","overdue":[],"overdue_count":0,"ageing":[],"ageing_count":0,"limit":25}',
+        "/liveness": b'{"status":"success"}',
+        "/readiness": b'{"status":"success","ready":true}',
+        "/runtime": (
+            b'{"status":"success","backend":"torch-xpu","device":"Arc","embedding_device":"xpu:0",'
+            b'"similarity_device":"xpu","cpu_fallback":false,"torch_cpu_threads":2,'
+            b'"model_warmed_up":true,"evidence_ranker":{}}'
+        ),
+    }
+    for endpoint, raw in valid_payloads.items():
+        parsed = client._validate_response(endpoint, raw)
+        assert parsed["status"] == "success"
+
+    for endpoint in ("/deprecate", "/verify", "/stale_report", "/readiness", "/runtime"):
+        with pytest.raises(RagProtocolError, match="missing required fields"):
+            client._validate_response(endpoint, b'{"status":"success"}')
+
+    with pytest.raises(RagProtocolError, match="must be a list"):
+        client._validate_response(
+            "/stale_report",
+            b'{"status":"success","overdue":{},"overdue_count":0,"ageing":[],"ageing_count":0,"limit":25}',
+        )
+
+
 def test_rag_client_enforces_shared_limits_before_transport(tmp_path):
     client = RagClient(_context(tmp_path), server_url="http://fixture.invalid")
     with pytest.raises(ValueError, match="query length"):

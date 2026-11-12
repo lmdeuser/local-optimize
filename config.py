@@ -404,32 +404,30 @@ def build_entity_stable_key(
 
 
 def build_dedup_scope(
-    project_name: str,
-    source_uri: str,
-    file_path: str,
+    project_id: str,
     content_hash: str,
-    source_type: str,
-    visibility: str,
-    agent_id: str,
-    session_id: str,
-    validation_status: str
-) -> tuple:
+    visibility: str = "shared",
+    agent_id: str = "",
+    session_id: str = "",
+) -> tuple[str, str, str, str, str]:
     """
-    Unified deduplication scope tuple used consistently across save(), indexing,
-    memory_optimize(), cleanup, and compaction procedures.
+    Unified deduplication scope tuple (v10+, status- and root-independent)
+    used consistently across save() and migrations.
     """
-    if not project_name or not project_name.strip():
-        raise ValueError("project_name is required for deduplication")
+    proj = (project_id or "").strip()
+    if not proj:
+        raise ValueError("project_id is required for deduplication")
+    scope_visibility = (visibility or "shared").strip()
+    if scope_visibility not in {"public", "shared", "agent-private", "session-private"}:
+        raise ValueError(f"Unsupported visibility: {scope_visibility}")
+    scope_agent = (agent_id or "").strip() if scope_visibility in {"agent-private", "session-private"} else ""
+    scope_session = (session_id or "").strip() if scope_visibility == "session-private" else ""
     return (
-        project_name.strip(),
-        (source_uri or "").strip(),
-        (file_path or "").strip(),
+        proj,
         (content_hash or "").strip(),
-        (source_type or "general").strip(),
-        (visibility or "shared").strip(),
-        (agent_id or "").strip(),
-        (session_id or "").strip(),
-        (validation_status or "unverified").strip()
+        scope_visibility,
+        scope_agent,
+        scope_session,
     )
 
 

@@ -2,7 +2,7 @@
 
 ## Что входит в пакет
 
-`local-optimize 1.0.1-0ubuntu4` для Ubuntu 26.04/amd64 устанавливает:
+`local-optimize 1.0.1-0ubuntu5` для Ubuntu 26.04/amd64 устанавливает:
 
 - приложение и переносимое Python 3.14/XPU-окружение в `/usr/lib/local-optimize`;
 - CLI `/usr/bin/local-optimize`;
@@ -29,7 +29,7 @@
 После скачивания готового пакета, собранного OBS со статусом `succeeded`, администратор может установить его:
 
 ```bash
-sudo apt install ./artifacts/debian/local-optimize_1.0.1-0ubuntu4_amd64.deb
+sudo apt install ./artifacts/debian/local-optimize_1.0.1-0ubuntu5_amd64.deb
 ```
 
 Затем настройте секреты и реестр проектов по `/usr/share/doc/local-optimize/docs/installation.md`, выполните `local-optimize migrate`, проверьте health и только после этого включите user services. Не создавайте отдельное окружение в `~/.local/share/local-optimize/venv`: CLI использует `/usr/lib/local-optimize/venv`. `local-optimize index` сохраняет каталог вызова через `LOCAL_OPTIMIZE_CALLER_DIR`; при необходимости явный контекст можно задать через `--working-directory`.

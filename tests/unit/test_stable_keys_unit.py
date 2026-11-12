@@ -43,27 +43,34 @@ def test_build_entity_stable_key_path_traversal_rejection():
 
 
 def test_build_dedup_scope_tuple():
-    scope = build_dedup_scope(
-        project_name="local_optimize",
-        source_uri="http://example.com",
-        file_path="app.py",
+    shared_scope = build_dedup_scope(
+        project_id="local_optimize",
         content_hash="abc123hash",
-        source_type="code",
         visibility="shared",
         agent_id="agent1",
         session_id="session1",
-        validation_status="validated"
     )
-    assert scope == (
+    assert shared_scope == (
         "local_optimize",
-        "http://example.com",
-        "app.py",
         "abc123hash",
-        "code",
         "shared",
+        "",
+        "",
+    )
+
+    private_scope = build_dedup_scope(
+        project_id="local_optimize",
+        content_hash="abc123hash",
+        visibility="session-private",
+        agent_id="agent1",
+        session_id="session1",
+    )
+    assert private_scope == (
+        "local_optimize",
+        "abc123hash",
+        "session-private",
         "agent1",
         "session1",
-        "validated"
     )
 
 

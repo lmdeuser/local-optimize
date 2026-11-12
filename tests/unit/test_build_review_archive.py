@@ -104,3 +104,35 @@ def test_archive_failure_preserves_previous_output(tmp_path, monkeypatch):
 
     assert output.read_bytes() == b"previous archive"
     assert not list(tmp_path.glob(".reviewed.zip.*.tmp"))
+
+
+def test_archive_includes_agents_and_runtime_metadata_but_not_venv_or_models(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "local_optimize"
+    root.mkdir()
+    (root / "AGENTS.md").write_text("# agents\n", encoding="utf-8")
+    runtime = root / "runtime"
+    runtime.mkdir()
+    for name in ("manifest.json", "requirements.lock", "split-manifest.json"):
+        (runtime / name).write_text("{}\n", encoding="utf-8")
+    venv_python = runtime / "venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text("#!/bin/sh\n", encoding="utf-8")
+    models = root / "models"
+    models.mkdir()
+    (models / "weights.bin").write_bytes(b"weights")
+    monkeypatch.setattr(archive_builder, "PROJECT_ROOT", root)
+
+    included = {
+        path.relative_to(root).as_posix() for path in archive_builder.build_file_list()
+    }
+
+    assert {
+        "AGENTS.md",
+        "runtime/manifest.json",
+        "runtime/requirements.lock",
+        "runtime/split-manifest.json",
+    } <= included
+    assert "runtime/venv/bin/python" not in included
+    assert "models/weights.bin" not in included

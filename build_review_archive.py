@@ -41,9 +41,15 @@ EXCLUDED_NAMES = {
 }
 EXCLUDED_SUFFIXES = {".pyc", ".pyo", ".zip", ".log", ".coverage"}
 ALLOWED_DIRECTORIES = {"debian", "docs", "evaluation", "hooks", "migrations", "obs", "packaging", "skills", "tests"}
-ALLOWED_SUPPORT_FILES = {"deploy/intel-xpu-requirements.txt"}
+ALLOWED_SUPPORT_FILES = {
+    "deploy/intel-xpu-requirements.txt",
+    "runtime/manifest.json",
+    "runtime/requirements.lock",
+    "runtime/split-manifest.json",
+}
 ALLOWED_ROOT_FILES = {
     ".gitignore",
+    "AGENTS.md",
     "ARCHITECTURE.md",
     "DATABASE_SCHEMA.md",
     "LICENSE",

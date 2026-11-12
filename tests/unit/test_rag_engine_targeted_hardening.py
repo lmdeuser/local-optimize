@@ -261,10 +261,13 @@ class MoveCursor:
             assert "k.visibility = %s" in text
             self.rows = [(21,)]
         elif text.startswith("UPDATE public.knowledge_provenance SET file_path"):
+            assert "root_id = %s" in text
             self.rows = [(31,)]
         elif text.startswith("SELECT id, knowledge_id"):
+            assert "root_id = %s" in text
             self.rows = [(31, 21, 11, str(self.connection.destination), "code", "new.py", "0", "1")]
         elif text.startswith("UPDATE public.knowledge_provenance SET reference_key"):
+            assert "root_id = %s" in text
             self.connection.reference_key = params[0]
             self.rows = []
         elif "UPDATE public.kb_entities" in text:
@@ -310,7 +313,7 @@ def test_move_recomputes_provenance_in_owner_scoped_transaction(tmp_path):
     result = engine.move_document(make_context(tmp_path), str(source), str(destination))
 
     material = "\x1f".join(
-        ("project-a", "11", str(destination), "code", "new.py", "0", "1")
+        ("project-a", "root-a", "11", str(destination), "code", "new.py", "0", "1")
     )
     assert result["status"] == "success"
     assert result["moved_count"] == 4

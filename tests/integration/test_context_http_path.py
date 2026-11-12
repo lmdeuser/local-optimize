@@ -6,15 +6,28 @@ from fastapi.testclient import TestClient
 
 TEST_SESSION_HEADERS = {"X-Local-RAG-Session": "test-session-1234567890"}
 
+import gpu_rag_server
 from config import settings
-from gpu_rag_server import SERVER_PROJECT_REGISTRY, app, get_rag_engine
+from gpu_rag_server import app, get_rag_engine
+from project_context import ProjectDefinition, ProjectRegistry
 
 pytestmark = pytest.mark.integration
 
 
-def context_payload(**overrides):
+@pytest.fixture
+def registry(tmp_path, monkeypatch):
+    project_root = tmp_path / "fixture-project"
+    project_root.mkdir()
+    value = ProjectRegistry([
+        ProjectDefinition("fixture-project", "Fixture Project", {"primary": project_root}),
+    ])
+    monkeypatch.setattr(gpu_rag_server, "get_project_registry", lambda _settings: value)
+    return value
+
+
+def context_payload(registry, **overrides):
     payload = {
-        "project_id": settings.project_root.name,
+        "project_id": "fixture-project",
         "root_id": "primary",
         "write_visibility": "session-private",
         "read_scope": "shared",
@@ -25,15 +38,15 @@ def context_payload(**overrides):
         "validation_status": "validated",
         "min_score": 0.2,
         "include_metadata": True,
-        "registry_fingerprint": SERVER_PROJECT_REGISTRY.fingerprint,
+        "registry_fingerprint": registry.fingerprint,
     }
     payload.update(overrides)
     return payload
 
 
-def knowledge_context_payload(**overrides):
+def knowledge_context_payload(registry, **overrides):
     payload = {
-        "project_id": settings.project_root.name,
+        "project_id": "fixture-project",
         "read_scope": "shared",
         "agent_id": "agent-a",
         "session_id": "session-a",
@@ -41,7 +54,7 @@ def knowledge_context_payload(**overrides):
         "language": "en",
         "min_score": 0.2,
         "include_metadata": True,
-        "registry_fingerprint": SERVER_PROJECT_REGISTRY.fingerprint,
+        "registry_fingerprint": registry.fingerprint,
     }
     payload.update(overrides)
     return payload
@@ -60,7 +73,7 @@ class CapturingEngine:
         return {"status": "success", "chunk_id": 1}
 
 
-def test_http_agentic_search_forwards_engine_hits_to_results():
+def test_http_agentic_search_forwards_engine_hits_to_results(registry):
     """The HTTP layer must read the engine's own "results" key.
 
     It previously consumed a non-existent "vector_hits" key, so every hit was
@@ -86,7 +99,7 @@ def test_http_agentic_search_forwards_engine_hits_to_results():
         with TestClient(app) as client:
             response = client.post(
                 "/agentic-search",
-                json={"context": knowledge_context_payload(), "query": "fixture", "limit": 2},
+                json={"context": knowledge_context_payload(registry), "query": "fixture", "limit": 2},
                 headers=TEST_SESSION_HEADERS,
             )
         assert response.status_code == 200
@@ -101,7 +114,7 @@ def test_http_agentic_search_forwards_engine_hits_to_results():
         app.dependency_overrides.clear()
 
 
-def test_http_search_passes_server_authorized_context_to_engine():
+def test_http_search_passes_server_authorized_context_to_engine(registry):
     engine = CapturingEngine()
     app.state.engine_factory = lambda: (_ for _ in ()).throw(RuntimeError("fixture"))
     app.dependency_overrides[get_rag_engine] = lambda: engine
@@ -109,13 +122,13 @@ def test_http_search_passes_server_authorized_context_to_engine():
         with TestClient(app) as client:
             response = client.post(
                 "/search",
-                json={"context": knowledge_context_payload(), "query": "fixture", "limit": 2},
+                json={"context": knowledge_context_payload(registry), "query": "fixture", "limit": 2},
                 headers=TEST_SESSION_HEADERS,
             )
         assert response.status_code == 200
         assert response.json()["evidence_coverage"] == 0.0  # No returned evidence.
         context = engine.calls[0]["context"]
-        assert context.project_id == settings.project_root.name
+        assert context.project_id == "fixture-project"
         assert not hasattr(context, "project_root")
         assert context.agent_id == settings.server_agent_id
         assert context.session_id == TEST_SESSION_HEADERS["X-Local-RAG-Session"]
@@ -123,7 +136,7 @@ def test_http_search_passes_server_authorized_context_to_engine():
         app.dependency_overrides.clear()
 
 
-def test_http_backend_error_status_is_503():
+def test_http_backend_error_status_is_503(registry):
     class ErrorEngine:
         _pool = object()
 
@@ -136,7 +149,7 @@ def test_http_backend_error_status_is_503():
         with TestClient(app) as client:
             response = client.post(
                 "/search",
-                json={"context": knowledge_context_payload(), "query": "fixture", "limit": 2},
+                json={"context": knowledge_context_payload(registry), "query": "fixture", "limit": 2},
                 headers=TEST_SESSION_HEADERS,
             )
         assert response.status_code == 503
@@ -145,7 +158,7 @@ def test_http_backend_error_status_is_503():
         app.dependency_overrides.clear()
 
 
-def test_http_agentic_response_uses_canonical_results():
+def test_http_agentic_response_uses_canonical_results(registry):
     class AgenticEngine:
         def agentic_search(self, **_kwargs):
             return {"status": "success", "vector_hits": [], "entities": [], "relations": []}
@@ -156,7 +169,7 @@ def test_http_agentic_response_uses_canonical_results():
         with TestClient(app) as client:
             response = client.post(
                 "/agentic-search",
-                json={"context": knowledge_context_payload(), "query": "fixture", "limit": 2},
+                json={"context": knowledge_context_payload(registry), "query": "fixture", "limit": 2},
                 headers=TEST_SESSION_HEADERS,
             )
         assert response.status_code == 200
@@ -166,9 +179,9 @@ def test_http_agentic_response_uses_canonical_results():
         app.dependency_overrides.clear()
 
 
-def test_http_requires_registry_fingerprint():
+def test_http_requires_registry_fingerprint(registry):
     engine = CapturingEngine()
-    payload = knowledge_context_payload()
+    payload = knowledge_context_payload(registry)
     payload.pop("registry_fingerprint")
     app.state.engine_factory = lambda: (_ for _ in ()).throw(RuntimeError("fixture"))
     app.dependency_overrides[get_rag_engine] = lambda: engine
@@ -183,7 +196,7 @@ def test_http_requires_registry_fingerprint():
         app.dependency_overrides.clear()
 
 
-def test_http_rejects_visibility_validation_confusion_before_engine():
+def test_http_rejects_visibility_validation_confusion_before_engine(registry):
     engine = CapturingEngine()
     app.state.engine_factory = lambda: (_ for _ in ()).throw(RuntimeError("fixture"))
     app.dependency_overrides[get_rag_engine] = lambda: engine
@@ -191,7 +204,7 @@ def test_http_rejects_visibility_validation_confusion_before_engine():
         with TestClient(app) as client:
             response = client.post(
                 "/save", json={
-                    "context": context_payload(write_visibility="authoritative"),
+                    "context": context_payload(registry, write_visibility="authoritative"),
                     "content": "long enough fixture content",
                 }, headers=TEST_SESSION_HEADERS
             )
@@ -201,7 +214,7 @@ def test_http_rejects_visibility_validation_confusion_before_engine():
         app.dependency_overrides.clear()
 
 
-def test_http_rejects_client_controlled_root_before_engine():
+def test_http_rejects_client_controlled_root_before_engine(registry):
     engine = CapturingEngine()
     app.state.engine_factory = lambda: (_ for _ in ()).throw(RuntimeError("fixture"))
     app.dependency_overrides[get_rag_engine] = lambda: engine
@@ -209,7 +222,7 @@ def test_http_rejects_client_controlled_root_before_engine():
         with TestClient(app, raise_server_exceptions=False) as client:
             response = client.post(
                 "/index_code", json={
-                    "context": context_payload(project_root="/", allowed_roots=["/"]),
+                    "context": context_payload(registry, project_root="/", allowed_roots=["/"]),
                     "path": "fixture.py",
                 }, headers=TEST_SESSION_HEADERS
             )

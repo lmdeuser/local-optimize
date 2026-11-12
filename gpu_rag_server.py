@@ -57,7 +57,6 @@ RAG_CONFIDENCE_THRESHOLD = float(
 )
 SERVER_HOST = settings.bind_address
 SERVER_PORT = settings.server_port
-SERVER_PROJECT_REGISTRY = get_project_registry(settings)
 BACKEND_SUCCESS = "success"
 BACKEND_ERROR = "error"
 BACKEND_UNAVAILABLE = "unavailable"
@@ -1132,6 +1131,7 @@ async def hook_context(
         )
     except ValueError as exc:
         raise HTTPException(status_code=403, detail="Hook context is not authorized") from exc
+    require_retrieval_readiness(engine)
     try:
         raw = await run_bounded_search(
             lambda: engine.search(
@@ -1143,6 +1143,17 @@ async def hook_context(
         log.error("Hook context error [%s]: %s", req_id, exc, exc_info=True)
         # A hook must never be the reason a prompt fails. Report the miss.
         return {"status": "unavailable", "injected": False, "text": "", "hashes": []}
+
+    raw_status = raw.get("status") if isinstance(raw, dict) else None
+    if raw_status not in (BACKEND_SUCCESS, "ok"):
+        log.error("Hook context backend search failed with status=%r", raw_status)
+        return {
+            "status": "unavailable" if raw_status == BACKEND_UNAVAILABLE else "error",
+            "injected": False,
+            "reason": "backend_error",
+            "text": "",
+            "hashes": [],
+        }
 
     results = raw.get("results") or []
     top_score = float(results[0].get("final_score", 0.0)) if results else 0.0
@@ -1241,8 +1252,7 @@ async def save(
     request: Request,
     engine: RagEngine = Depends(get_rag_engine)
 ):
-    from asyncio import get_event_loop
-    loop = get_event_loop()
+    loop = asyncio.get_running_loop()
     context = req.context.to_context(
         agent_id=request.state.agent_id, session_id=request.state.session_id
     )
@@ -1285,8 +1295,7 @@ async def deprecate(req: DeprecateRequest, request: Request, engine: RagEngine =
     error to swallow.
     """
     context = req.context.to_context(agent_id=request.state.agent_id, session_id=request.state.session_id)
-    from asyncio import get_event_loop
-    loop = get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(
             None,
@@ -1319,8 +1328,7 @@ async def deprecate(req: DeprecateRequest, request: Request, engine: RagEngine =
 async def verify(req: VerifyRequest, request: Request, engine: RagEngine = Depends(get_rag_engine)):
     """Record that a fact was re-confirmed. Reports `updated: 0` when nothing matched."""
     context = req.context.to_context(agent_id=request.state.agent_id, session_id=request.state.session_id)
-    from asyncio import get_event_loop
-    loop = get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(
             None,
@@ -1352,8 +1360,7 @@ async def verify(req: VerifyRequest, request: Request, engine: RagEngine = Depen
 async def stale_report(req: StaleReportRequest, request: Request, engine: RagEngine = Depends(get_rag_engine)):
     """List knowledge that is overdue for re-confirmation. Read-only."""
     context = req.context.to_context(agent_id=request.state.agent_id, session_id=request.state.session_id)
-    from asyncio import get_event_loop
-    loop = get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(
             None,
@@ -1381,8 +1388,7 @@ async def stale_report(req: StaleReportRequest, request: Request, engine: RagEng
 async def index_code(req: IndexRequest, request: Request, engine: RagEngine = Depends(get_rag_engine)):
     context = req.context.to_context(agent_id=request.state.agent_id, session_id=request.state.session_id)
     valid_path = context.validate_path(req.path, must_exist=True)
-    from asyncio import get_event_loop
-    loop = get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(
             None, lambda: engine.index_code(context, str(valid_path))
@@ -1409,8 +1415,7 @@ async def index_code(req: IndexRequest, request: Request, engine: RagEngine = De
 async def index_document(req: IndexRequest, request: Request, engine: RagEngine = Depends(get_rag_engine)):
     context = req.context.to_context(agent_id=request.state.agent_id, session_id=request.state.session_id)
     valid_path = context.validate_path(req.path, must_exist=True)
-    from asyncio import get_event_loop
-    loop = get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(
             None, lambda: engine.index_document(context, str(valid_path))
@@ -1431,8 +1436,7 @@ async def index_document(req: IndexRequest, request: Request, engine: RagEngine 
 async def delete_document(req: DeleteRequest, request: Request, engine: RagEngine = Depends(get_rag_engine)):
     context = req.context.to_context(agent_id=request.state.agent_id, session_id=request.state.session_id)
     valid_path = context.validate_path(req.path, must_exist=False)
-    from asyncio import get_event_loop
-    loop = get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(
             None, lambda: engine.delete_document(context, str(valid_path))
@@ -1454,8 +1458,7 @@ async def move_document(req: MoveRequest, request: Request, engine: RagEngine = 
     context = req.context.to_context(agent_id=request.state.agent_id, session_id=request.state.session_id)
     source = context.validate_path(req.source_path, must_exist=False)
     destination = context.validate_path(req.destination_path, must_exist=True)
-    from asyncio import get_event_loop
-    loop = get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(
             None, lambda: engine.move_document(context, str(source), str(destination))
@@ -1481,8 +1484,7 @@ async def move_document(req: MoveRequest, request: Request, engine: RagEngine = 
 
 @app.post("/feedback")
 async def feedback(req: FeedbackRequest, request: Request, engine: RagEngine = Depends(get_rag_engine)):
-    from asyncio import get_event_loop
-    loop = get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         context = req.context.to_context(
             agent_id=request.state.agent_id, session_id=request.state.session_id
@@ -1506,8 +1508,7 @@ async def feedback(req: FeedbackRequest, request: Request, engine: RagEngine = D
 
 @app.post("/consolidate")
 async def consolidate(req: ConsolidateRequest, request: Request, engine: RagEngine = Depends(get_rag_engine)):
-    from asyncio import get_event_loop
-    loop = get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         context = req.context.to_context(
             agent_id=request.state.agent_id, session_id=request.state.session_id
@@ -1530,8 +1531,7 @@ async def consolidate(req: ConsolidateRequest, request: Request, engine: RagEngi
 @app.post("/memory_optimize")
 @app.post("/memory-optimize")
 async def memory_optimize(req: MemoryOptimizeRequest, request: Request, engine: RagEngine = Depends(get_rag_engine)):
-    from asyncio import get_event_loop
-    loop = get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         context = req.context.to_context(
             agent_id=request.state.agent_id, session_id=request.state.session_id

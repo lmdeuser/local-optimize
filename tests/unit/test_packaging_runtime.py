@@ -162,3 +162,90 @@ def test_index_all_uses_launcher_caller_directory(tmp_path, monkeypatch):
 
     assert index_project_codebase.index_all() == 0
     assert captured["working_directory"] == str(caller)
+
+
+def test_index_project_codebase_handles_extensions_symlinks_foreign_roots_and_exit_code(
+    tmp_path, monkeypatch
+):
+    import sys
+
+    import index_project_codebase
+    from project_context import ProjectDefinition, ProjectRegistry
+
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    (parent / "notes.txt").write_text("plain text document\n", encoding="utf-8")
+    (parent / "UPPER.TXT").write_text("upper text document\n", encoding="utf-8")
+    (parent / "APP.PY").write_text("x = 1\n", encoding="utf-8")
+    skills_dir = parent / "skills"
+    skills_dir.mkdir()
+    (skills_dir / "guide.MD").write_text("# skill\n", encoding="utf-8")
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("secret\n", encoding="utf-8")
+    (parent / "link.txt").symlink_to(outside / "secret.txt")
+    (parent / "linked_dir").symlink_to(outside)
+
+    foreign = parent / "nested_foreign"
+    foreign.mkdir()
+    (foreign / "foreign.py").write_text("y = 2\n", encoding="utf-8")
+
+    registry = ProjectRegistry([
+        ProjectDefinition("parent", "Parent", {"primary": parent}),
+        ProjectDefinition("foreign", "Foreign", {"primary": foreign}),
+    ])
+    context = registry.resolve(
+        project_id="parent",
+        root_id="primary",
+        write_visibility="shared",
+        read_scope="shared",
+        agent_id="project-indexer",
+        session_id="manual-index",
+        registry_fingerprint_hint=registry.fingerprint,
+    )
+
+    calls = []
+
+    class RecordingEngine:
+        def index_code(self, _ctx, path):
+            calls.append(("code", Path(path).name))
+            return {"status": "success"}
+
+        def index_skill(self, _ctx, path):
+            calls.append(("skill", Path(path).name))
+            return {"status": "success"}
+
+        def index_document(self, _ctx, path):
+            calls.append(("doc", Path(path).name))
+            if Path(path).name == "UPPER.TXT":
+                return {"status": "error"}
+            return {"status": "success"}
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        index_project_codebase, "build_default_project_context", lambda *_a, **_kw: context
+    )
+    monkeypatch.setattr(index_project_codebase, "get_project_registry", lambda _s: registry)
+    monkeypatch.setattr(index_project_codebase, "RagEngine", RecordingEngine)
+    monkeypatch.setattr(sys, "argv", ["index_project_codebase.py"])
+
+    assert index_project_codebase.main() == 1
+    assert ("doc", "notes.txt") in calls
+    assert ("doc", "UPPER.TXT") in calls
+    assert ("code", "APP.PY") in calls
+    assert ("skill", "guide.MD") in calls
+    assert all(name not in {"link.txt", "secret.txt", "foreign.py"} for _kind, name in calls)
+
+    calls.clear()
+    (parent / "UPPER.TXT").write_text("ok\n", encoding="utf-8")
+
+    class AllOkEngine(RecordingEngine):
+        def index_document(self, _ctx, path):
+            calls.append(("doc", Path(path).name))
+            return {"status": "success"}
+
+    monkeypatch.setattr(index_project_codebase, "RagEngine", AllOkEngine)
+    assert index_project_codebase.main() == 0

@@ -4,55 +4,123 @@
 # Защищен от гонки процессов (flock) и ограничен недельной глубиной (7 копий)
 # ==============================================================================
 set -euo pipefail
+shopt -s failglob
 
-# Защита от параллельного запуска нескольких инстансов бэкапа (flock)
-LOCKFILE="${LOCKFILE:-/var/run/postgres-backup.lock}"
-exec 200>"$LOCKFILE"
-if ! flock -n 200; then
-    echo "⚠️ Другой процесс бэкапа уже выполняется. Завершение работы."
-    exit 0
-fi
+CURRENT_TEMP_FILE=""
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKUP_DIR="${1:-${BACKUP_DIR:-/home/backups/postgres}}"
-RETENTION_DAYS="${RETENTION_DAYS:-7}"
-MAX_BACKUPS_PER_DB="${MAX_BACKUPS_PER_DB:-7}"
-DATE=$(date +%Y-%m-%d_%H%M%S)
+resolve_lock_file() {
+    if [[ -n "${LOCKFILE:-}" ]]; then
+        printf '%s\n' "${LOCKFILE}"
+    elif [[ -n "${LOCK_FILE:-}" ]]; then
+        printf '%s\n' "${LOCK_FILE}"
+    elif [[ -n "${RUNTIME_DIRECTORY:-}" ]]; then
+        printf '%s/postgres-backup.lock\n' "${RUNTIME_DIRECTORY}"
+    elif [[ -d /run/lock && -w /run/lock ]]; then
+        printf '%s\n' "/run/lock/local-optimize-postgres-backup.lock"
+    else
+        printf '%s/local-optimize-postgres-backup-%s.lock\n' "${TMPDIR:-/tmp}" "$(id -u)"
+    fi
+}
 
-# Проверка готовности PostgreSQL к приему подключений
-if ! pg_isready -q; then
-    echo "❌ Ошибка: PostgreSQL недоступен для создания резервной копии."
-    exit 1
-fi
+cleanup_temp() {
+    if [[ -n "${CURRENT_TEMP_FILE:-}" ]]; then
+        rm -f -- "${CURRENT_TEMP_FILE}"
+    fi
+}
 
-mkdir -p "${BACKUP_DIR}"
+rotate_db_backups() {
+    local backup_dir="$1"
+    local db_name="$2"
+    local max_backups="$3"
+    local count=0
+    local _timestamp=""
+    local old_file=""
 
-# Получение списка всех пользовательских баз данных
-DATABASES=$(sudo -u postgres psql -tAc "SELECT datname FROM pg_database WHERE datname NOT IN ('template0', 'template1') AND datistemplate = false;")
+    while IFS=$'\t' read -r -d '' _timestamp old_file; do
+        count=$((count + 1))
+        if (( count > max_backups )); then
+            rm -f -- "${old_file}"
+        fi
+    done < <(
+        find "${backup_dir}" -maxdepth 1 -type f -name "${db_name}_*.dump" -printf '%T@\t%p\0' \
+            | sort -z -rn -k1,1
+    )
+}
 
-for DB in ${DATABASES}; do
-    BACKUP_FILE="${BACKUP_DIR}/${DB}_${DATE}.dump"
-    TEMP_FILE=$(mktemp "${BACKUP_DIR}/.${DB}_${DATE}.dump.tmp.XXXXXX")
-    chmod 0600 "${TEMP_FILE}"
-    cleanup_temp() {
-        rm -f -- "${TEMP_FILE}"
-    }
-    trap cleanup_temp EXIT INT TERM
-    echo "📦 Резервное копирование БД: ${DB} -> ${BACKUP_FILE}"
-    sudo -u postgres pg_dump -Fc "${DB}" > "${TEMP_FILE}"
-    if [[ ! -s "${TEMP_FILE}" ]] || ! pg_restore --list "${TEMP_FILE}" >/dev/null; then
-        echo "❌ Ошибка: проверка резервной копии БД ${DB} не пройдена."
+main() {
+    umask 077
+
+    local backup_dir="${1:-${BACKUP_DIR:-/var/backups/local-optimize/postgres}}"
+    local retention_days="${RETENTION_DAYS:-7}"
+    local max_backups_per_db="${MAX_BACKUPS_PER_DB:-7}"
+    local lock_file=""
+    local backup_date=""
+    local -a databases=()
+
+    if [[ ! "${retention_days}" =~ ^[0-9]+$ ]] || [[ ! "${max_backups_per_db}" =~ ^[0-9]+$ ]]; then
+        echo "Ошибка: RETENTION_DAYS и MAX_BACKUPS_PER_DB должны быть целыми неотрицательными числами." >&2
+        exit 2
+    fi
+
+    lock_file="$(resolve_lock_file)"
+    exec 200>"${lock_file}"
+    if ! flock -n 200; then
+        echo "Другой процесс бэкапа уже выполняется. Завершение работы." >&2
+        exit 0
+    fi
+
+    backup_date="$(date +%Y-%m-%d_%H%M%S)"
+
+    if ! pg_isready -q; then
+        echo "Ошибка: PostgreSQL недоступен для создания резервной копии." >&2
         exit 1
     fi
-    sync -f "${TEMP_FILE}"
-    mv -f -- "${TEMP_FILE}" "${BACKUP_FILE}"
-    sync -f "${BACKUP_DIR}"
-    trap - EXIT INT TERM
 
-    # Ограничение по количеству: оставляем строго не более 7 последних бэкапов для каждой базы
-    ls -t "${BACKUP_DIR}/${DB}_"*.dump 2>/dev/null | tail -n +$((MAX_BACKUPS_PER_DB + 1)) | xargs -r rm -f
-done
+    mkdir -p "${backup_dir}"
+    chmod 0700 "${backup_dir}"
 
-# Очистка по возрасту (старше 7 дней)
-find "${BACKUP_DIR}" -type f -name "*.dump" -mtime +"${RETENTION_DAYS}" -delete
-echo "✅ Резервное копирование успешно завершено (сохранено до ${MAX_BACKUPS_PER_DB} свежих бэкапов на каждую БД). Хранилище: ${BACKUP_DIR}"
+    mapfile -t databases < <(
+        psql -tAc "SELECT datname FROM pg_database WHERE datname NOT IN ('template0', 'template1') AND datistemplate = false;"
+    )
+
+    if (( ${#databases[@]} == 0 )); then
+        echo "Не найдено пользовательских баз данных для резервного копирования." >&2
+        exit 1
+    fi
+
+    trap cleanup_temp EXIT INT TERM
+
+    local db=""
+    local backup_file=""
+    local temp_file=""
+    for db in "${databases[@]}"; do
+        [[ -n "${db}" ]] || continue
+        if [[ "${db}" == */* ]]; then
+            echo "Ошибка: недопустимое имя базы данных: ${db}" >&2
+            exit 1
+        fi
+        backup_file="${backup_dir}/${db}_${backup_date}.dump"
+        temp_file="$(mktemp "${backup_dir}/.${db}_${backup_date}.dump.tmp.XXXXXX")"
+        CURRENT_TEMP_FILE="${temp_file}"
+        chmod 0600 "${temp_file}"
+
+        echo "Резервное копирование БД: ${db} -> ${backup_file}" >&2
+        pg_dump -Fc -- "${db}" > "${temp_file}"
+        if [[ ! -s "${temp_file}" ]] || ! pg_restore --list "${temp_file}" >/dev/null; then
+            echo "Ошибка: проверка резервной копии БД ${db} не пройдена." >&2
+            exit 1
+        fi
+        sync -f "${temp_file}"
+        mv -f -- "${temp_file}" "${backup_file}"
+        CURRENT_TEMP_FILE=""
+        chmod 0600 "${backup_file}"
+        sync -f "${backup_dir}"
+
+        rotate_db_backups "${backup_dir}" "${db}" "${max_backups_per_db}"
+    done
+
+    find "${backup_dir}" -maxdepth 1 -type f -name "*.dump" -mtime +"${retention_days}" -delete
+    echo "Резервное копирование успешно завершено (сохранено до ${max_backups_per_db} свежих бэкапов на каждую БД). Хранилище: ${backup_dir}" >&2
+}
+
+main "$@"

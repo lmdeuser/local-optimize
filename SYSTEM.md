@@ -55,7 +55,7 @@
 | `reembed_corpus.py` | Скрипт перерасчета и обновления векторных эмбеддингов корпуса при смене модели без изменения текстового контента. |
 | `rag_benchmark.py` | Фреймворк бенчмаркинга качества RAG-поиска по эталонному датасету (Gold Dataset). |
 | `postgres_backup.sh` | Shell-скрипт резервного копирования PostgreSQL c блокировкой `flock`, дампом `pg_dump -Fc` и ротацией бэкапов. |
-| `migrations/` | Директория версионированных SQL-миграций схемы (файлы `0001_*.sql` — `0014_*.sql`) и `manifest.json`; v13 обязательна, v14 с локальным answer cache необязательна. |
+| `migrations/` | Директория версионированных SQL-миграций схемы (файлы `0001_*.sql` — `0015_*.sql`) и `manifest.json`; v13 и v15 обязательны, v14 с локальным answer cache необязательна. |
 | `models/` | Локальные копии/веса моделей эмбеддингов (`multilingual-e5-small`, `all-MiniLM-L6-v2`, `paraphrase-multilingual-MiniLM-L12-v2`). |
 | `skills/` | Первичный канонический каталог 39 инженерных навыков Markdown и `manifest.json`. |
 | `refactored-agent-skills/` | Вспомогательный репозиторий с модульными версиями скиллов и документацией. |
@@ -106,16 +106,16 @@
   - `id` (BIGSERIAL PK), `project_id`, `root_id`, `file_path`, `content`, `content_hash` (SHA-256).
   - `dedup_key` (TEXT UNIQUE) — уникальный дедупликационный ключ.
   - `embedding` (`vector(384)`) — вектор эмбеддинга.
-  - `fts_doc_tokens` (`tsvector`) — токены для полнотекстового поиска (русский + английский словари).
+  - `fts_tokens` (`tsvector`) — токены для полнотекстового поиска (русский + английский словари).
   - `visibility` (`public`, `shared`, `agent-private`, `session-private`).
   - `agent_id`, `session_id` — идентификаторы владельцев.
   - `validation_status` (`unverified`, `validated`, `authoritative`, `deprecated`, `invalidated`).
-  - `importance` (INT, 1–5), `verified_at` (TIMESTAMPTZ), `recheck_after_days` (INT), `entity_id` (BIGINT FK к `kb_entities`).
-- `kb_documents`: Учет индексируемых документов и файлов (`id` PK, `project_id`, `root_id`, `file_path`, `source_type`, `content_hash`, `is_active`, `created_at`, `updated_at`).
-- `knowledge_provenance`: Связь многие-ко-многим между чанками и исходными документами (`id` PK, `project_id`, `root_id`, `chunk_id` FK, `document_id` FK, `source_uri`, `start_locator`, `end_locator`). Сохраняет ссылки на все источники при совпадении контента.
-- `kb_entities`: Канонические сущности семантического графа (`id` BIGSERIAL PK, `project_id`, `name`, `stable_key` UNIQUE, `entity_type`, `description`, `metadata`).
-- `kb_relations`: Канонические направленные ребра графа (`id` BIGSERIAL PK, `project_id`, `from_entity_id` FK, `to_entity_id` FK, `relation_type`, `weight`, `metadata`).
-- `entity_evidence`, `relation_evidence`: Слой изоляции доступа (Evidence ACL) для графа. Связывает канонические сущности и связи с конкретными `project_id`, `root_id`, `visibility`, `agent_id`, `session_id`, `validation_status`, `document_id` и `chunk_id`.
+  - `importance` (SMALLINT, 1–5), `verified_at` (TIMESTAMPTZ), `recheck_after_days` (INT), `entity_id` (BIGINT FK к `kb_entities`).
+- `kb_documents`: Учет индексируемых документов и файлов (`id` PK, `project_id`, `root_id`, `file_path`, `source_uri`, `source_type`, `content_hash`, `is_deleted`, `created_at`, `updated_at`).
+- `knowledge_provenance`: Связь многие-ко-многим между чанками и исходными документами (`id` PK, `project_id`, `root_id`, `knowledge_id` FK к `project_knowledge`, `document_id` FK, `source_uri`, `source_type`, `file_path`, `start_locator`, `end_locator`, `reference_key`). Сохраняет ссылки на все источники при совпадении контента.
+- `kb_entities`: Канонические сущности семантического графа (`id` BIGSERIAL PK, `project_id`, `name`, `stable_key` UNIQUE, `type`, `description`, `metadata`).
+- `kb_relations`: Канонические направленные ребра графа (`id` BIGSERIAL PK, `project_id`, `from_id` FK к `kb_entities`, `to_id` FK к `kb_entities`, `relation_type`, `weight` double precision DEFAULT 1.0, `confidence` double precision DEFAULT 1.0).
+- `entity_evidence`, `relation_evidence`: Слой изоляции доступа (Evidence ACL) для графа. Связывает канонические сущности и связи с конкретными `project_id`, `root_id`, `visibility`, `agent_id`, `session_id`, `validation_status`, `is_active`, `document_id`, `provenance_id` и `chunk_id`.
 - `kb_feedback_logs`: Логирование пользовательской и агентской обратной связи (`query`, `feedback_type`, `correction`, скоринг).
 - `agent_sessions`, `agent_messages`: Операционные очереди и журнал межсессионных сообщений (с поддержкой выборки через `FOR UPDATE SKIP LOCKED`).
 
@@ -256,7 +256,7 @@ MCP-сервер (`mcp_server.py`, имя сервера `local-rag`) экспо
 
 Управление схемой базы данных полностью изолировано внутри `migration_runner.py`:
 
-- **Принцип работы**: Файлы миграций расположены в `migrations/0001_baseline.sql` — `0014_local_answer_cache.sql` и зарегистрированы в `migrations/manifest.json`. Движок `RagEngine` работает строго в режиме read-only и никогда не применяет DDL на лету. Обязательная v13 добавляет query cache и generation counters; необязательная v14 добавляет validated local answer cache.
+- **Принцип работы**: Файлы миграций расположены в `migrations/0001_baseline.sql` — `0015_root_scoped_stable_keys.sql` и зарегистрированы в `migrations/manifest.json`. Движок `RagEngine` работает строго в режиме read-only и никогда не применяет DDL на лету. Обязательные v13 и v15 добавляют query cache/generation counters и изоляцию `stable_key`/`provenance` по `root_id`; необязательная v14 добавляет validated local answer cache.
 - **Блокировки и транзакционность**: Перед анализом и выполнением миграций берется стабильный сессионный PostgreSQL advisory lock с ограниченным таймаутом. Каждая миграция и запись в таблице `schema_migrations` фиксируются в одной транзакции (`commit`).
 - **Обработка сбоев (Committed Boundary)**: При ошибке транзакция текущей миграции откатывается (`rollback`), а ранее зафиксированные версии объявляются неизменной границей. Деструктивные откаты в БД автоматически не выполняются.
 - **Сверка легаси-схем (`reconcile_legacy`)**: Если таблица существовала до появления манифеста контрольных сумм, строка получает статус `legacy-unverified`. Метод выполняет проверку всех инвариантов (таблицы, колонки, индексы, внешние ключи) и только при полном совпадении проставляет SHA-256.
@@ -304,7 +304,7 @@ python3 -m pytest -q -m systemd
 
 ### Индексация кодовой базы
 - **Автоматическая индексация (`watchdog_indexer.py`)**: Работает как фоновый сервис systemd (`local-optimize-watchdog.service`). Отслеживает изменения файлов в `project_root`, фильтрует бинарные файлы и кэши (`.venv`, `__pycache__`, `node_modules`), дебаунсит события (1.0 сек) и отправляет запросы на `/index_code`, `/index_document`, `/delete_document` или `/move_document` на центральный RAG-сервер. При перемещении файлов переименование выполняется в одной транзакции на стороне БД.
-- **Пакетная ручная индексация (`index_project_codebase.py`)**: Выполняет полный рекурсивный обход директории проекта и пакетную загрузку кода (`.py`) и документации (`.md`, `.sql`, `.sh`, `.json`) с областью видимости `shared`.
+- **Пакетная ручная индексация (`index_project_codebase.py`)**: Выполняет полный рекурсивный обход директории проекта (пропуская симлинки и вложенные корни других проектов) и пакетную загрузку кода (`CODE_EXTENSIONS`: `.py`) и документов (`DOCUMENT_EXTENSIONS`: `.md`, `.txt`, `.jsonl`, `.json`, `.yaml`, `.yml`, `.sql`, `.sh`) с областью видимости `shared`.
 
 ### Перерасчет эмбеддингов (`reembed_corpus.py`)
 При смене модели эмбеддингов в конфигурации прямое сравнение векторов становится невозможным. Скрипт `reembed_corpus.py`:
@@ -313,9 +313,9 @@ python3 -m pytest -q -m systemd
 - Поддерживает безопасный перезапуск с места остановки (resumable) и режим предварительного просмотра (`--dry-run`).
 
 ### Резервное копирование (`postgres_backup.sh`)
-- Защищен от параллельного запуска файловой блокировкой `flock` (`/var/run/postgres-backup.lock`).
-- Создает бинарные дампы `pg_dump -Fc` через временные файлы с валидацией целостности командой `pg_restore --list`.
-- Хранит резервные копии с глубиной ротации 7 дней (`RETENTION_DAYS=7`).
+- Защищен от параллельного запуска файловой блокировкой `flock` (`LOCKFILE`/`LOCK_FILE`, `$RUNTIME_DIRECTORY/postgres-backup.lock` или `/run/lock/local-optimize-postgres-backup.lock`).
+- Запускается от целевой учётной записи без встроенного `sudo -u postgres`, создаёт бинарные дампы `pg_dump -Fc` через временные файлы с `umask 077` и валидацией `pg_restore --list`.
+- Хранит резервные копии в `BACKUP_DIR` (по умолчанию `/var/backups/local-optimize/postgres`) с глубиной ротации 7 дней (`RETENTION_DAYS=7`, `MAX_BACKUPS_PER_DB=7`).
 
 ### Бенчмаркинг качества RAG (`rag_benchmark.py`)
 - Запускает валидацию по эталонному датасету `GOLD_DATASET`.

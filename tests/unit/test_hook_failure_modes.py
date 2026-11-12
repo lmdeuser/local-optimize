@@ -540,3 +540,33 @@ class TestTheHarvester:
         )
         assert finished.returncode == 0
         assert self.queue(tmp_path) == []
+
+    def test_harvest_queue_and_state_dir_enforce_private_permissions(self, tmp_path):
+        server = self.responding([
+            {
+                "text": "Инвалидация кеша выполняется счётчиком поколений на проект, а не удалением строк.",
+                "why": "architecture",
+            }
+        ])
+        try:
+            transcript = self.transcript(tmp_path, [self.message("user", "обсуждение кеша")])
+            finished, _ = self.run(
+                tmp_path,
+                transcript=transcript,
+                ollama=f"http://127.0.0.1:{server.server_address[1]}",
+            )
+            assert finished.returncode == 0
+            state_dir = tmp_path / ".local/state/local-optimize/hooks"
+            queue_path = state_dir / "harvest-queue.jsonl"
+            assert queue_path.exists()
+            assert (state_dir.stat().st_mode & 0o777) == 0o700
+            assert (queue_path.stat().st_mode & 0o777) == 0o600
+        finally:
+            server.shutdown()
+
+    def test_query_local_model_uses_safe_parser_on_malformed_output(self, monkeypatch):
+        import hooks.rag_harvest as rag_harvest
+        import fast_router
+
+        monkeypatch.setattr(fast_router, "query_local_ollama", lambda *_args, **_kwargs: "[broken json")
+        assert rag_harvest.query_local_model("prompt") == []

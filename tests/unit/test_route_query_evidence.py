@@ -12,7 +12,7 @@ def mock_client_context(monkeypatch):
     async def context(**_kwargs):
         return object()
 
-    monkeypatch.setattr(mcp_server, "build_client_project_context", context)
+    monkeypatch.setattr(mcp_server, "build_client_knowledge_context", context)
 
 
 @pytest.mark.asyncio
@@ -150,3 +150,46 @@ async def test_unsupported_route_policy_fails_closed():
     )
     assert result["route"] == "escalate"
     assert result["reason"] == "Unsupported routing policy"
+
+
+@pytest.mark.asyncio
+async def test_route_query_builds_knowledge_context_without_root_id(monkeypatch, tmp_path):
+    from project_context import KnowledgeContext, ProjectDefinition, ProjectRegistry
+    import project_context as pc
+
+    registry = ProjectRegistry([ProjectDefinition("proj-a", "Project A", {"root-a": tmp_path})])
+    monkeypatch.undo()
+    monkeypatch.setattr(pc, "get_project_registry", lambda *_a, **_kw: registry)
+    monkeypatch.setattr(mcp_server, "get_project_registry", lambda *_a, **_kw: registry)
+
+    captured_contexts = []
+
+    class FakeClient:
+        def __init__(self, ctx):
+            captured_contexts.append(ctx)
+
+        def search(self, *_args, **_kwargs):
+            return {"status": "success", "top_score": 0.9, "evidence_coverage": 0.5, "results": []}
+
+        def lookup_local_answer(self, *_args, **_kwargs):
+            return {"hit": False, "generation": 0}
+
+        def store_local_answer(self, *_args, **_kwargs):
+            return {"stored": False}
+
+    async def inline_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(mcp_server, "RagClient", FakeClient)
+    monkeypatch.setattr(mcp_server.asyncio, "to_thread", inline_to_thread)
+    monkeypatch.setattr(
+        mcp_server,
+        "route_query",
+        lambda *_a, **_kw: {"decision": "escalate", "response_kind": "escalation", "cited_evidence_ids": []},
+    )
+
+    result = json.loads(
+        await mcp_server.route_query_tool("fixture question", project_id="proj-a")
+    )
+    assert result["status"] == "success"
+    assert isinstance(captured_contexts[0], KnowledgeContext)

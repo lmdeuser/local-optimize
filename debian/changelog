@@ -1,3 +1,12 @@
+local-optimize (1.0.1-0ubuntu5) resolute; urgency=medium
+
+  * Enforce root_id and owner scoping across provenance, graph, verify, stale_report, and deduplication keys.
+  * Require retrieval readiness in /hook/context, align route_query_tool context, and validate RagClient responses.
+  * Replace SERVER_PROJECT_REGISTRY coupling with isolated test registries and running-loop async handling.
+  * Harden index_project_codebase, postgres_backup.sh, rag_harvest permissions, packaging metadata, and schema docs.
+
+ -- Local Optimize contributors <28979718+lmdeuser@users.noreply.github.com>  Fri, 13 Nov 2026 03:01:00 +0500
+
 local-optimize (1.0.1-0ubuntu4) resolute; urgency=medium
 
   * Preserve user-owned and modified Markdown files during skill synchronization.

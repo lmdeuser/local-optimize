@@ -136,24 +136,23 @@ def query_backend(prompt: str) -> list[dict[str, Any]]:
         return []
 
 
+def _ensure_private_dir(path: str) -> None:
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    os.chmod(path, 0o700)
+
+
 def query_local_model(prompt: str) -> list[dict[str, Any]]:
     from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    root = str(Path(__file__).resolve().parent.parent)
+    if root not in sys.path:
+        sys.path.insert(0, root)
     from fast_router import query_local_ollama
     try:
         raw_out = query_local_ollama(prompt, timeout=20, num_predict=256)
     except (RuntimeError, TimeoutError, ValueError):
         return []
 
-    start_idx = raw_out.find("[")
-    end_idx = raw_out.rfind("]")
-    if start_idx == -1 or end_idx == -1 or end_idx < start_idx:
-        return []
-
-    parsed = json.loads(raw_out[start_idx : end_idx + 1])
-    if isinstance(parsed, list):
-        return [item for item in parsed if isinstance(item, dict)]
-    return []
+    return _parse_candidates(raw_out)
 
 
 def _harvest_is_due(session_id: str) -> bool:
@@ -183,8 +182,10 @@ def _harvest_is_due(session_id: str) -> bool:
     except OSError:
         return True
     try:
-        os.makedirs(os.path.dirname(stamp), exist_ok=True)
-        with open(stamp, "w", encoding="utf-8") as handle:
+        _ensure_private_dir(os.path.dirname(stamp))
+        fd = os.open(stamp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.chmod(stamp, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(str(int(now)))
     except OSError:
         pass
@@ -240,9 +241,11 @@ def main() -> None:
 
     try:
         state_dir = os.path.expanduser("~/.local/state/local-optimize/hooks")
-        os.makedirs(state_dir, exist_ok=True)
+        _ensure_private_dir(state_dir)
         queue_path = os.path.join(state_dir, "harvest-queue.jsonl")
-        with open(queue_path, "a", encoding="utf-8") as f:
+        fd = os.open(queue_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.chmod(queue_path, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
             for item in valid_candidates:
                 f.write(json.dumps(item, ensure_ascii=False) + "\n")
     except Exception as e:

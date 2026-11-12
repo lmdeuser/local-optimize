@@ -1,4 +1,4 @@
-.TH LOCAL-OPTIMIZE 1 "November 2026" "local-optimize 1.0.0" "User Commands"
+.TH LOCAL-OPTIMIZE 1 "November 2026" "local-optimize 1.0.1" "User Commands"
 .SH NAME
 local-optimize \- run the local-first MCP/RAG engine
 .SH SYNOPSIS
@@ -7,12 +7,12 @@ local-optimize \- run the local-first MCP/RAG engine
 .RI [ arguments ]
 .SH DESCRIPTION
 .B local-optimize
-runs application entry points from /usr/lib/local-optimize using the current user's Python virtual environment.
+runs application entry points from /usr/lib/local-optimize using the packaged Python virtual environment.
 It does not create models, secrets, databases or agent configuration.
 .PP
 The Python interpreter is read from
 .B LOCAL_OPTIMIZE_VENV
-or from ~/.local/share/local-optimize/venv.
+or from /usr/lib/local-optimize/venv.
 .B LOCAL_OPTIMIZE_ROOT
 can override the application directory for packaging checks.
 .SH COMMANDS
@@ -48,8 +48,8 @@ Application files.
 .I ~/.config/local-optimize/secrets.env
 User-managed secrets; never installed by the package.
 .TP
-.I ~/.local/share/local-optimize/venv
-Default Python environment.
+.I /usr/lib/local-optimize/venv
+Packaged Python environment.
 .SH SEE ALSO
 .BR systemctl (1),
 .BR python3 (1)

@@ -1112,11 +1112,10 @@ async def route_query_tool(
                 "reason": "Unsupported routing policy",
                 "correlation": corr,
             }, ensure_ascii=False, separators=(",", ":"))
-        project_context = await build_client_project_context(
+        project_context = await build_client_knowledge_context(
             project_id=project_id,
             root_id=root_id,
             working_directory=working_directory,
-            write_visibility="session-private",
             read_scope=read_scope,
             agent_id=MCP_AGENT_ID,
             session_id=MCP_SESSION_ID,

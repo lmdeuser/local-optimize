@@ -36,7 +36,7 @@ from psycopg2 import pool as pgpool
 from psycopg2 import sql as pgsql
 import numpy as np
 from transformers import AutoTokenizer
-from config import settings
+from config import build_dedup_scope, settings
 from local_inference import correlation_id
 from project_context import KnowledgeContext, ProjectContext, ReadScope, build_default_project_context
 from query_cache import BoundedTTLCache as _BoundedTTLCache
@@ -192,6 +192,32 @@ def build_owner_scope_sql(context: ProjectContext, table_alias: str = "") -> tup
     return " AND ".join(clauses), params
 
 
+
+
+def build_provenance_reference_key(
+    project_id: str,
+    root_id: str,
+    document_id: Any,
+    source_uri: str | None,
+    source_type: str | None,
+    file_path: str | None,
+    start_locator: str | None,
+    end_locator: str | None,
+) -> str:
+    """Compute the root-scoped SHA-256 provenance reference key."""
+    reference_material = "\x1f".join(
+        (
+            project_id,
+            root_id,
+            str(document_id or ""),
+            source_uri or "",
+            source_type or "",
+            file_path or "",
+            start_locator or "",
+            end_locator or "",
+        )
+    )
+    return hashlib.sha256(reference_material.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def build_evidence_acl_sql(
@@ -1354,6 +1380,7 @@ class RagEngine:
         log.info("RAM PAGE FAULT: Сущность '%s' не найдена в RAM. Подгрузка с HDD (Postgres)...", page_id)
         conn_provided = conn is not None
         db_conn = conn if conn_provided else self._get_conn()
+        error = False
         try:
             from config import build_entity_stable_key
             raw_id, scoped_id = self._scoped_page_id(context, page_id)
@@ -1385,11 +1412,14 @@ class RagEngine:
                     log.warning("RAM PAGE FAULT EXCEPTION: Сущность '%s' отсутствует на HDD.", page_id)
                     return False
         except Exception as e:
+            if not conn_provided:
+                db_conn.rollback()
+            error = True
             log.error("Ошибка при обработке Page Fault: %s", e)
             return False
         finally:
             if not conn_provided:
-                self._put_conn(db_conn)
+                self._put_conn(db_conn, error=error)
 
     def agentic_search(
         self,
@@ -1799,20 +1829,32 @@ class RagEngine:
                             py_files.append(os.path.join(root, f))
                             
                 conn = None
+                error = False
                 try:
                     from config import build_entity_stable_key
                     conn = self._get_conn()
+                    owner_sql, owner_params = build_owner_scope_sql(context)
                     for pf in py_files:
                         file_name = os.path.basename(pf)
                         mtime = os.path.getmtime(pf)
                         rel_path = os.path.relpath(pf, active_root)
                         s_key = build_entity_stable_key(context, rel_path, "file", rel_path)
-                        
+
                         # Проверяем, когда файл индексировался последний раз
                         with conn.cursor() as cur:
-                            cur.execute("SELECT metadata FROM kb_entities WHERE stable_key = %s OR (metadata->>'relative_path' = %s AND type = 'file')", (s_key, rel_path))
+                            cur.execute(
+                                "SELECT metadata FROM public.kb_entities "
+                                f"WHERE project_id = %s AND {owner_sql} AND ("
+                                "stable_key = %s OR (type = 'file' AND metadata->>'relative_path' = %s "
+                                "AND EXISTS (SELECT 1 FROM public.entity_evidence ee "
+                                "WHERE ee.entity_id = public.kb_entities.id AND ee.project_id = %s AND ee.root_id = %s)))",
+                                (
+                                    context.project_id, *owner_params, s_key, rel_path,
+                                    context.project_id, context.root_id,
+                                ),
+                            )
                             row = cur.fetchone()
-                            
+
                         need_indexing = True
                         if row:
                             meta = row[0]
@@ -1820,43 +1862,54 @@ class RagEngine:
                             last_mtime = meta_dict.get("mtime", 0.0)
                             if abs(last_mtime - mtime) < 0.1:
                                 need_indexing = False
-                                
+
                         if need_indexing:
                             log.info("Self-Learning: Обнаружено изменение в '%s'. Автоматическая фоновая переиндексация...", file_name)
                             self.index_code(context, pf)
                             # Обновляем mtime в БД по stable_key
                             with conn.cursor() as cur:
                                 cur.execute(
-                                    "UPDATE kb_entities SET metadata = metadata || %s::jsonb WHERE stable_key = %s OR metadata->>'relative_path' = %s",
-                                    (json.dumps({"mtime": mtime}), s_key, rel_path)
+                                    "UPDATE public.kb_entities SET metadata = metadata || %s::jsonb "
+                                    f"WHERE project_id = %s AND {owner_sql} AND stable_key = %s",
+                                    (json.dumps({"mtime": mtime}), context.project_id, *owner_params, s_key),
                                 )
                             conn.commit()
                             time.sleep(0.1)
                 except Exception as e:
+                    if conn is not None:
+                        conn.rollback()
+                        error = True
                     log.warning("Ошибка при фоновой индексации кодовой базы: %s", e)
                 finally:
                     if conn:
-                        self._put_conn(conn)
+                        self._put_conn(conn, error=error)
 
             # 2. Сканируем директорию скилов (skills/) для автоматического обучения новым инструкциям
             skills_dir = os.path.join(active_root, "skills")
             if os.path.exists(skills_dir):
                 skill_files = [os.path.join(skills_dir, f) for f in os.listdir(skills_dir) if f.endswith(".md")]
-                
+
                 conn = None
+                error = False
                 try:
+                    from config import build_entity_stable_key
                     conn = self._get_conn()
+                    owner_sql, owner_params = build_owner_scope_sql(context)
                     for sf in skill_files:
                         file_name = os.path.basename(sf)
                         mtime = os.path.getmtime(sf)
-                        
+
                         # Проверяем дату изменения в БД
                         skill_name = f"policy_{file_name.replace('.md', '')}"
                         s_key = build_entity_stable_key(context, f"skills/{file_name}", "system_guideline", skill_name)
                         with conn.cursor() as cur:
-                            cur.execute("SELECT metadata FROM kb_entities WHERE stable_key = %s", (s_key,))
+                            cur.execute(
+                                "SELECT metadata FROM public.kb_entities "
+                                f"WHERE project_id = %s AND {owner_sql} AND stable_key = %s",
+                                (context.project_id, *owner_params, s_key),
+                            )
                             row = cur.fetchone()
-                            
+
                         need_indexing = True
                         if row:
                             meta = row[0]
@@ -1864,15 +1917,18 @@ class RagEngine:
                             last_mtime = meta_dict.get("mtime", 0.0)
                             if abs(last_mtime - mtime) < 0.1:
                                 need_indexing = False
-                                
+
                         if need_indexing:
                             log.info("Self-Learning: Обнаружен новый или измененный скил '%s'. Автоматическое добавление в векторную базу...", file_name)
                             self.index_skill(context, sf)
                 except Exception as e:
+                    if conn is not None:
+                        conn.rollback()
+                        error = True
                     log.warning("Ошибка при фоновой автоиндексации скилов: %s", e)
                 finally:
                     if conn:
-                        self._put_conn(conn)
+                        self._put_conn(conn, error=error)
             
             # Проверяем изменения кодовой базы и скилов каждые 30 секунд (проверяя флаг выхода каждые 0.1 сек)
             for _ in range(300):
@@ -2956,11 +3012,11 @@ class RagEngine:
                 knowledge_ids = [row[0] for row in cur.fetchall()]
                 cur.execute(
                     "UPDATE public.knowledge_provenance SET file_path = %s, source_uri = %s "
-                    "WHERE project_id = %s AND knowledge_id = ANY(%s) "
+                    "WHERE project_id = %s AND root_id = %s AND knowledge_id = ANY(%s) "
                     "AND (file_path = %s OR source_uri = %s) RETURNING id",
                     (
                         destination_relative, str(destination), context.project_id,
-                        knowledge_ids, source_relative, str(source),
+                        context.root_id, knowledge_ids, source_relative, str(source),
                     ),
                 )
                 provenance_ids = [row[0] for row in cur.fetchall()]
@@ -2968,8 +3024,8 @@ class RagEngine:
                     cur.execute(
                         "SELECT id, knowledge_id, document_id, source_uri, source_type, file_path, "
                         "start_locator, end_locator FROM public.knowledge_provenance "
-                        "WHERE project_id = %s AND id = ANY(%s) FOR UPDATE",
-                        (context.project_id, provenance_ids),
+                        "WHERE project_id = %s AND root_id = %s AND id = ANY(%s) FOR UPDATE",
+                        (context.project_id, context.root_id, provenance_ids),
                     )
                     for row in cur.fetchall():
                         if len(row) != 8:
@@ -2978,24 +3034,20 @@ class RagEngine:
                             provenance_id, _knowledge_id, document_id, source_uri,
                             source_type, normalized_file, start_locator, end_locator,
                         ) = row
-                        reference_material = "\x1f".join(
-                            (
-                                context.project_id,
-                                str(document_id or ""),
-                                source_uri or "",
-                                source_type or "",
-                                normalized_file or "",
-                                start_locator or "",
-                                end_locator or "",
-                            )
+                        reference_key = build_provenance_reference_key(
+                            context.project_id,
+                            context.root_id,
+                            document_id,
+                            source_uri,
+                            source_type,
+                            normalized_file,
+                            start_locator,
+                            end_locator,
                         )
-                        reference_key = hashlib.sha256(
-                            reference_material.encode("utf-8"), usedforsecurity=False
-                        ).hexdigest()
                         cur.execute(
                             "UPDATE public.knowledge_provenance SET reference_key = %s "
-                            "WHERE project_id = %s AND id = %s",
-                            (reference_key, context.project_id, provenance_id),
+                            "WHERE project_id = %s AND root_id = %s AND id = %s",
+                            (reference_key, context.project_id, context.root_id, provenance_id),
                         )
                 cur.execute(
                     "UPDATE public.entity_evidence SET source_ref = %s, updated_at = now() "
@@ -3052,6 +3104,8 @@ class RagEngine:
         Автономное действие: выполнение системной команды (тесты, линтинг, компиляция)
         с последующим анализом логов и автоматическим обучением на результатах (успех/ошибки).
         """
+        if not isinstance(context, ProjectContext):
+            raise TypeError("execute_and_learn requires ProjectContext")
         if os.getenv("ENABLE_EXECUTE_AND_LEARN", "0").lower() not in {"1", "true", "yes", "on"}:
             return {
                 "status": "disabled",
@@ -3087,7 +3141,7 @@ class RagEngine:
                 capture_output=True,
                 text=True,
                 timeout=120,
-                cwd=SCRIPT_DIR
+                cwd=context.project_root,
             )
             stdout = (res.stdout or "")[:50000]
             stderr = (res.stderr or "")[:50000]
@@ -3144,13 +3198,20 @@ class RagEngine:
                     source_ref=f"execution:{run_name}"
                 )
                 
+            owner_sql, owner_params = build_owner_scope_sql(context)
             for f_name in mentioned_files:
                 f_skey = build_entity_stable_key(context, f_name, "file", f_name)
                 with conn.cursor() as cur:
                     cur.execute(
-                        "SELECT id FROM public.kb_entities WHERE project_id = %s "
-                        "AND (stable_key = %s OR metadata->>'relative_path' = %s)",
-                        (context.project_id, f_skey, f_name),
+                        "SELECT id FROM public.kb_entities "
+                        f"WHERE project_id = %s AND {owner_sql} AND ("
+                        "stable_key = %s OR (type = 'file' AND metadata->>'relative_path' = %s "
+                        "AND EXISTS (SELECT 1 FROM public.entity_evidence ee "
+                        "WHERE ee.entity_id = public.kb_entities.id AND ee.project_id = %s AND ee.root_id = %s)))",
+                        (
+                            context.project_id, *owner_params, f_skey, f_name,
+                            context.project_id, context.root_id,
+                        ),
                     )
                     f_row = cur.fetchone()
                     if f_row:
@@ -3164,8 +3225,10 @@ class RagEngine:
                         # Если запуск упал, понижаем веса отношений этого файла (ослабление синапсов)
                         if code != 0:
                             cur.execute(
-                                "UPDATE kb_relations SET weight = LEAST(1.0, GREATEST(0.0, weight - 0.1)) "
-                                "WHERE from_id = %s OR to_id = %s", (f_id, f_id)
+                                "UPDATE public.kb_relations "
+                                "SET weight = LEAST(1.0, GREATEST(0.0, weight - 0.1)) "
+                                f"WHERE project_id = %s AND {owner_sql} AND (from_id = %s OR to_id = %s)",
+                                (context.project_id, *owner_params, f_id, f_id),
                             )
                             log.info("Self-Learning: Понижен вес связей для сущности '%s' из-за сбоя теста/выполнения.", f_name)
             conn.commit()
@@ -3316,7 +3379,7 @@ class RagEngine:
                 # mechanism that corrected nothing. See `deprecate` for retiring a
                 # fact whose replacement is worded differently.
                 dedup_material = "\x1f".join(
-                    (
+                    build_dedup_scope(
                         context.project_id,
                         content_hash,
                         visibility,
@@ -3381,19 +3444,16 @@ class RagEngine:
                 # was already there. Routine indexing never asserts one.
                 corpus_changed = (bool(upserted[1]) or str(validation_status) != "unverified"
                                   or "source_snapshot" in metadata or restore_source)
-                reference_material = "\x1f".join(
-                    (
-                        context.project_id,
-                        context.root_id,
-                        str(document_id or ""),
-                        source_uri,
-                        source_type,
-                        normalized_file,
-                        start_locator,
-                        end_locator,
-                    )
+                reference_key = build_provenance_reference_key(
+                    context.project_id,
+                    context.root_id,
+                    document_id,
+                    source_uri,
+                    source_type,
+                    normalized_file,
+                    start_locator,
+                    end_locator,
                 )
-                reference_key = hashlib.sha256(reference_material.encode("utf-8"), usedforsecurity=False).hexdigest()
                 cur.execute(
                     "INSERT INTO public.knowledge_provenance "
                     "(knowledge_id, document_id, project_id, root_id, source_uri, source_type, file_path, "
@@ -3568,8 +3628,8 @@ class RagEngine:
             scope_sql, scope_params = build_read_scope_sql(
                 context.read_scope.value, context.agent_id, context.session_id
             )
-            where = ["project_id = %s", scope_sql]
-            params: list = [context.project_id, *scope_params]
+            where = ["project_id = %s", "root_id = %s", scope_sql]
+            params: list = [context.project_id, context.root_id, *scope_params]
             if chunk_id is not None:
                 where.append("id = %s")
                 params.append(int(chunk_id))
@@ -3646,7 +3706,7 @@ class RagEngine:
             )
             base = (
                 "FROM public.project_knowledge "
-                f"WHERE project_id = %s AND {scope_sql} "
+                f"WHERE project_id = %s AND root_id = %s AND {scope_sql} "
                 "  AND validation_status NOT IN ('invalidated', 'deprecated') "
                 "  AND importance >= %s "
             )
@@ -3665,7 +3725,7 @@ class RagEngine:
                     "ORDER BY (COALESCE(verified_at, created_at) "
                     "          + make_interval(days => recheck_after_days)) ASC "
                     "LIMIT %s",
-                    [context.project_id, *scope_params, int(min_importance), limit],
+                    [context.project_id, context.root_id, *scope_params, int(min_importance), limit],
                 )
                 overdue = [self._staleness_row(r) for r in cur.fetchall()]
 
@@ -3679,7 +3739,7 @@ class RagEngine:
                         "ORDER BY importance DESC, COALESCE(verified_at, created_at) ASC "
                         "LIMIT %s",
                         [
-                            context.project_id, *scope_params, int(min_importance),
+                            context.project_id, context.root_id, *scope_params, int(min_importance),
                             int(include_undeclared_after_days), limit,
                         ],
                     )

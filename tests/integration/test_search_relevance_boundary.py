@@ -3,14 +3,27 @@
 import pytest
 from fastapi.testclient import TestClient
 
+import gpu_rag_server
 from config import settings
-from gpu_rag_server import app, get_rag_engine, SERVER_PROJECT_REGISTRY
+from gpu_rag_server import app, get_rag_engine
+from project_context import ProjectDefinition, ProjectRegistry
 
 pytestmark = pytest.mark.integration
 
 
+@pytest.fixture
+def registry(tmp_path, monkeypatch):
+    project_root = tmp_path / "fixture-project"
+    project_root.mkdir()
+    value = ProjectRegistry([
+        ProjectDefinition("fixture-project", "Fixture Project", {"primary": project_root}),
+    ])
+    monkeypatch.setattr(gpu_rag_server, "get_project_registry", lambda _settings: value)
+    return value
+
+
 @pytest.mark.parametrize("scores", [[0.01, 0.02], [0.9, 0.01]])
-def test_http_drops_below_floor_hits(monkeypatch, scores):
+def test_http_drops_below_floor_hits(monkeypatch, registry, scores):
     class Engine:
         def search(self, **kwargs):
             return {
@@ -29,9 +42,9 @@ def test_http_drops_below_floor_hits(monkeypatch, scores):
         with TestClient(app) as client:
             response = client.post("/search", headers={"X-Local-RAG-Session": "relevance-fixture-session"}, json={
                 "context": {
-                    "project_id": settings.project_root.name, "root_id": "primary",
+                    "project_id": "fixture-project", "root_id": "primary",
                     "read_scope": "shared", "write_visibility": "shared",
-                    "registry_fingerprint": SERVER_PROJECT_REGISTRY.fingerprint,
+                    "registry_fingerprint": registry.fingerprint,
                 },
                 "query": "fixture question", "limit": 5,
             })

@@ -398,6 +398,9 @@ class RagClient:
             "/answer-cache/lookup": ("hit", "generation"),
             "/answer-cache/store": ("stored",),
             "/save": ("status",),
+            "/deprecate": ("status", "updated", "validation_status"),
+            "/verify": ("status", "updated"),
+            "/stale_report": ("status", "overdue", "overdue_count", "ageing", "ageing_count", "limit"),
             "/index_code": ("status",),
             "/index_document": ("status",),
             "/delete_document": ("status",),
@@ -405,12 +408,20 @@ class RagClient:
             "/feedback": ("status",),
             "/consolidate": ("status",),
             "/memory_optimize": ("status",),
+            "/liveness": ("status",),
+            "/readiness": ("status", "ready"),
+            "/runtime": (
+                "status", "backend", "device", "embedding_device",
+                "similarity_device", "cpu_fallback", "torch_cpu_threads",
+                "model_warmed_up", "evidence_ranker",
+            ),
         }
         missing = [key for key in required_by_endpoint.get(endpoint, ()) if key not in result]
         if missing:
             raise RagProtocolError("RAG server response is missing required fields")
-        if "results" in result and not isinstance(result["results"], list):
-            raise RagProtocolError("RAG server results must be a list")
+        for list_field in ("results", "overdue", "ageing"):
+            if list_field in result and not isinstance(result[list_field], list):
+                raise RagProtocolError(f"RAG server {list_field} must be a list")
         return result
 
     def _get(self, endpoint: str) -> dict:

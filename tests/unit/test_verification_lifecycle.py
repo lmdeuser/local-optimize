@@ -175,6 +175,8 @@ def test_verify_stamps_the_row_and_is_project_scoped(tmp_path):
     )
     assert "verified_at = now()" in query
     assert "project_id = %s" in query
+    assert "root_id = %s" in query
+    assert "root-a" in params
     assert 30 in params
 
 
@@ -251,3 +253,6 @@ def test_ageing_population_is_opt_in(tmp_path):
     )
     assert len(connection.calls) == 2
     assert without["ageing"] == [] and with_ageing["status"] == "success"
+    for query, params in connection.calls:
+        assert "root_id = %s" in query
+        assert params[:2] == ["project-a", "root-a"]

@@ -9,15 +9,25 @@ pytest.importorskip("psycopg2")
 pytest.importorskip("transformers")
 from fastapi.testclient import TestClient
 
+import gpu_rag_server
 from config import settings
 from gpu_rag_server import app, get_rag_engine
-from project_context import ProjectContext, get_project_registry
+from project_context import ProjectContext, ProjectDefinition, ProjectRegistry
 from rag_client import RagClient
 from rag_engine import RagEngine
 
 pytestmark = pytest.mark.integration
 
-SERVER_PROJECT_REGISTRY = get_project_registry(settings)
+
+@pytest.fixture
+def registry(tmp_path, monkeypatch):
+    project_root = tmp_path / "fixture-project"
+    project_root.mkdir()
+    value = ProjectRegistry([
+        ProjectDefinition("fixture-project", "Fixture Project", {"primary": project_root}),
+    ])
+    monkeypatch.setattr(gpu_rag_server, "get_project_registry", lambda _settings: value)
+    return value
 
 class MockEngine:
     def __init__(self):
@@ -57,14 +67,14 @@ def client(engine, monkeypatch):
         yield c
     app.dependency_overrides.clear()
 
-def test_missing_session_header(client):
+def test_missing_session_header(client, registry):
     r = client.post("/save", json={
         "context": {
-            "project_id": "local_optimize",
+            "project_id": "fixture-project",
             "root_id": "primary",
             "write_visibility": "session-private",
             "read_scope": "session",
-            "registry_fingerprint": SERVER_PROJECT_REGISTRY.fingerprint
+            "registry_fingerprint": registry.fingerprint
         },
         "content": "test"
     })
@@ -79,14 +89,14 @@ def test_missing_session_header(client):
     "session!@#$%",  # forbidden chars
     "session\x00test123",  # unicode control char
 ])
-def test_malformed_session_headers(client, bad_session):
+def test_malformed_session_headers(client, registry, bad_session):
     r = client.post("/save", headers={"X-Local-RAG-Session": bad_session}, json={
         "context": {
-            "project_id": "local_optimize",
+            "project_id": "fixture-project",
             "root_id": "primary",
             "write_visibility": "session-private",
             "read_scope": "session",
-            "registry_fingerprint": SERVER_PROJECT_REGISTRY.fingerprint
+            "registry_fingerprint": registry.fingerprint
         },
         "content": "test"
     })
@@ -109,17 +119,17 @@ def test_liveness_readiness_options_no_header(client):
     assert r.status_code == 200, r.text
     assert "x-local-rag-session" in r.headers.get("access-control-allow-headers", "").lower()
 
-def test_session_isolation(client, engine):
+def test_session_isolation(client, engine, registry):
     session_a = "session-a-1234567"
     session_b = "session-b-1234567"
     
     payload_a = {
         "context": {
-            "project_id": "local_optimize",
+            "project_id": "fixture-project",
             "root_id": "primary",
             "write_visibility": "session-private",
             "read_scope": "session",
-            "registry_fingerprint": SERVER_PROJECT_REGISTRY.fingerprint,
+            "registry_fingerprint": registry.fingerprint,
             "agent_id": settings.server_agent_id
         },
         "content": "This is a long enough content A",
@@ -150,15 +160,15 @@ def test_session_isolation(client, engine):
     assert len(r.json()["results"]) == 0
     assert engine.search_called_with == session_b
 
-def test_json_identity_override_fails(client, engine):
+def test_json_identity_override_fails(client, engine, registry):
     session_a = "session-a-1234567"
     payload = {
         "context": {
-            "project_id": "local_optimize",
+            "project_id": "fixture-project",
             "root_id": "primary",
             "write_visibility": "session-private",
             "read_scope": "session",
-            "registry_fingerprint": SERVER_PROJECT_REGISTRY.fingerprint,
+            "registry_fingerprint": registry.fingerprint,
             "session_id": "hacked-session-id",
             "agent_id": "hacked-agent-id"
         },
@@ -265,7 +275,7 @@ def test_rag_client_passes_header_from_context():
 
 
 
-def test_search_is_blocked_when_readiness_fails(client, engine, monkeypatch):
+def test_search_is_blocked_when_readiness_fails(client, engine, registry, monkeypatch):
     monkeypatch.setattr(
         engine,
         "require_readiness",
@@ -274,11 +284,11 @@ def test_search_is_blocked_when_readiness_fails(client, engine, monkeypatch):
     )
     payload = {
         "context": {
-            "project_id": "local_optimize",
+            "project_id": "fixture-project",
             "root_id": "primary",
             "write_visibility": "session-private",
             "read_scope": "session",
-            "registry_fingerprint": SERVER_PROJECT_REGISTRY.fingerprint,
+            "registry_fingerprint": registry.fingerprint,
             "agent_id": settings.server_agent_id,
         },
         "query": "must not run",
@@ -291,7 +301,9 @@ def test_search_is_blocked_when_readiness_fails(client, engine, monkeypatch):
     assert engine.search_called_with is None
 
 
-def test_partial_index_uses_canonical_status_and_mode(client, engine, monkeypatch):
+def test_partial_index_uses_canonical_status_and_mode(client, engine, registry, monkeypatch):
+    fixture_file = registry.roots_for("fixture-project")[0] / "fixture.py"
+    fixture_file.write_text("print('fixture')\n", encoding="utf-8")
     monkeypatch.setattr(
         engine,
         "index_code",
@@ -300,14 +312,14 @@ def test_partial_index_uses_canonical_status_and_mode(client, engine, monkeypatc
     )
     payload = {
         "context": {
-            "project_id": "local_optimize",
+            "project_id": "fixture-project",
             "root_id": "primary",
             "write_visibility": "session-private",
             "read_scope": "session",
-            "registry_fingerprint": SERVER_PROJECT_REGISTRY.fingerprint,
+            "registry_fingerprint": registry.fingerprint,
             "agent_id": settings.server_agent_id,
         },
-        "path": "tests/integration/test_session_contract.py",
+        "path": str(fixture_file),
     }
 
     response = client.post("/index_code", headers={"X-Local-RAG-Session": "session-test-123456"}, json=payload)
