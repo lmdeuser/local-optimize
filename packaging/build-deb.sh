@@ -54,6 +54,9 @@ python3 "$ROOT/packaging/payload_components.py" pack \
 rm -rf "$WORK/source/runtime/venv" \
        "$WORK/source/runtime/models" \
        "$WORK/source/runtime/ollama-models"
+for archive in "$WORK"/"${PACKAGE}_${UPSTREAM_VERSION}".orig-runtime-*.tar.gz; do
+    tar -xzf "$archive" -C "$WORK/source" --strip-components=1
+done
 
 cd "$WORK/source"
 if [[ ${SOURCE_ONLY:-0} == 1 ]]; then
