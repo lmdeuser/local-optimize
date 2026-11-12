@@ -8,15 +8,21 @@ Target project and package:
 
 The package contains compiled Python 3.14/XPU dependencies and pinned models. It is intentionally specific to Ubuntu 26.04/amd64; Ubuntu 24.04 is not a compatible target for this payload.
 
-## Cloud-only build policy
+## Controlled build policy
 
-All source-package generation, runtime staging, binary builds, and package verification MUST run in the cloud release infrastructure. OBS is the build authority. Never run `packaging/build-deb.sh` (including `SOURCE_ONLY=1`), `dpkg-buildpackage`, payload-staging scripts, or `lintian` on locally built packages in the workspace.
+The only permitted local packaging entrypoint is the project-local runner:
 
-The local workspace may only receive ready packages produced by OBS. Never upload locally generated DEB, orig tar, component tar, Debian tar, or DSC files. Accidentally created local build artifacts, caches, diagnostic directories, and temporary worktrees must be removed.
+```bash
+packaging/run-obs-source-local.sh
+```
 
-Release inputs must be assembled from tracked Git sources by authorized cloud release automation. If that automation is unavailable, leave the release unpublished rather than building locally. Secrets, agent configuration, Git-ignored notes, and unrelated untracked files must never enter release inputs.
+It creates the `.dsc`, main orig tar, and Debian tar in a temporary directory, publishes them as GitHub Release assets, and removes the temporary files. Never register new GitHub-hosted or self-hosted runners for this project.
 
-Components are limited to 512 MiB before compression. Oversized files are split and reassembled with SHA-256 verification during the cloud build. A release is accepted only when OBS reports `succeeded`; a local `.deb` is never a substitute.
+OBS is the binary build and package-verification authority. Never run `packaging/build-deb.sh` (including `SOURCE_ONLY=1`), `dpkg-buildpackage`, runtime staging, or `lintian` on locally built packages. Never upload locally generated DEB or runtime component archives. Remove accidental build artifacts, caches, diagnostic directories, and temporary worktrees.
+
+`obs/_service` downloads the published source assets into OBS. Runtime components and their hashes remain pinned in OBS and in `runtime/`. Secrets, agent configuration, Git-ignored notes, and unrelated untracked files must never enter release inputs.
+
+Components are limited to 512 MiB before compression. Oversized files are split and reassembled with SHA-256 verification during the OBS build. A release is accepted only when OBS reports `succeeded`; a local `.deb` is never a substitute.
 
 ## Create or update OBS metadata
 
@@ -31,7 +37,7 @@ osc -A https://api.opensuse.org api -X PUT \
 
 ## Inspect the cloud build
 
-The authorized cloud release workflow updates OBS sources from tracked Git inputs. Do not replace it with an `osc checkout` workflow that copies locally generated source archives into OBS.
+The project-local runner publishes source assets, and the OBS source service downloads them. Do not replace this with an `osc checkout` workflow that copies arbitrary local archives into OBS.
 
 Inspect cloud results and logs:
 

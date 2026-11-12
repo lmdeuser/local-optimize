@@ -14,13 +14,13 @@
 
 Системными prerequisites остаются Intel driver/OpenCL ICD, PostgreSQL 18/pgvector и установленные Ollama binary/service. Пакет не создаёт БД, секреты, projects registry или конфигурацию агентов и не включает user services до настройки `secrets.env`. Корневая файловая система с runtime должна находиться на SSD.
 
-## Только облачная сборка
+## Контролируемая сборка
 
-Сборка пакетов, формирование исходных архивов, подготовка runtime, сборка DEB и проверка пакетов выполняются **только в облачной release-инфраструктуре**. OBS является обязательным build authority. Локальный запуск `packaging/build-deb.sh` (включая `SOURCE_ONLY=1`), `dpkg-buildpackage`, сценариев подготовки payload и `lintian` для локально собранных пакетов запрещён.
+Единственный разрешённый локальный packaging entrypoint — проектный runner `packaging/run-obs-source-local.sh`. Он формирует только `.dsc`, основной orig tar и Debian tar во временном каталоге, публикует их как GitHub Release assets и удаляет временные файлы. Регистрировать новые GitHub-hosted или self-hosted runners для проекта запрещено.
 
-В локальный workspace разрешено только скачивать готовые пакеты, созданные OBS. Локально созданные `.deb`, `.dsc`, orig tar, `orig-runtime-*.tar.gz` и Debian tar не считаются релизными артефактами и не должны загружаться в OBS. Если такие файлы или временные build/cache/diagnostic-каталоги были созданы случайно, работу нужно остановить и удалить их.
+Бинарная сборка и проверка пакета выполняются только в OBS. Локальный запуск `packaging/build-deb.sh` (включая `SOURCE_ONLY=1`), `dpkg-buildpackage`, подготовка runtime и `lintian` для локально собранных пакетов запрещены. Локальные `.deb` и runtime-компоненты не являются релизными артефактами и не должны загружаться в OBS.
 
-Релиз принимается только со статусом OBS `succeeded` для `xUbuntu_26.04`/`x86_64`. Если облачная release-автоматизация недоступна, релиз остаётся неопубликованным: локальная сборка не является запасным вариантом.
+Релиз принимается только со статусом OBS `succeeded` для `xUbuntu_26.04`/`x86_64`. В локальный workspace можно скачивать готовые пакеты OBS. Случайно созданные build/cache/diagnostic-каталоги и временные worktree удаляются.
 
 `packaging/runtime-policy.json` фиксирует revisions и digest; `runtime/manifest.json` в готовом пакете содержит SHA-256 payload. Компоненты ограничены 512 МиБ до сжатия; большие файлы разбиваются и собираются с проверкой SHA-256 во время облачной сборки. Секреты, Git-игнорируемые заметки и произвольные untracked-файлы не должны попадать в release inputs.
 
@@ -36,7 +36,7 @@ sudo apt install ./artifacts/debian/local-optimize_1.0.1-0ubuntu4_amd64.deb
 
 ## OBS
 
-Текущая цель: `home:dwolfF:local-optimize/local-optimize`, репозиторий `xUbuntu_26.04`, архитектура `x86_64`. Требования к облачному релизу и команды проверки статуса находятся в `obs/README.md`. Локальная сборка запрещена и не считается успешной OBS-сборкой: требуется статус `succeeded`.
+Текущая цель: `home:dwolfF:local-optimize/local-optimize`, репозиторий `xUbuntu_26.04`, архитектура `x86_64`. Требования к релизу и команды проверки статуса находятся в `obs/README.md`. Проектный runner формирует только source assets; успешным релизом считается только OBS `succeeded`.
 
 ## Подключение APT-репозитория
 
