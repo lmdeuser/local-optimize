@@ -1,8 +1,14 @@
 <services>
-  <service name="gbp_scm" mode="serveronly">
-    <param name="url">https://github.com/lmdeuser/local-optimize.git</param>
-    <param name="scm">git</param>
-    <param name="revision">main</param>
-    <param name="gbp-build-args">-nc -uc -us -S --git-upstream-tree=HEAD --git-ignore-branch</param>
+  <service name="download_url" mode="serveronly">
+    <param name="url">https://github.com/lmdeuser/local-optimize/releases/download/obs-source-1.0.1-0ubuntu4/local-optimize_1.0.1-0ubuntu4.dsc</param>
+    <param name="filename">local-optimize_1.0.1-0ubuntu4.dsc</param>
+  </service>
+  <service name="download_url" mode="serveronly">
+    <param name="url">https://github.com/lmdeuser/local-optimize/releases/download/obs-source-1.0.1-0ubuntu4/local-optimize_1.0.1.orig.tar.gz</param>
+    <param name="filename">local-optimize_1.0.1.orig.tar.gz</param>
+  </service>
+  <service name="download_url" mode="serveronly">
+    <param name="url">https://github.com/lmdeuser/local-optimize/releases/download/obs-source-1.0.1-0ubuntu4/local-optimize_1.0.1-0ubuntu4.debian.tar.xz</param>
+    <param name="filename">local-optimize_1.0.1-0ubuntu4.debian.tar.xz</param>
   </service>
 </services>
