@@ -55,7 +55,11 @@ rm -rf "$WORK/source/runtime/venv" \
        "$WORK/source/runtime/models" \
        "$WORK/source/runtime/ollama-models"
 for archive in "$WORK"/"${PACKAGE}_${UPSTREAM_VERSION}".orig-runtime-*.tar.gz; do
-    tar -xzf "$archive" -C "$WORK/source" --strip-components=1
+    filename=${archive##*/}
+    component=${filename#"${PACKAGE}_${UPSTREAM_VERSION}.orig-"}
+    component=${component%.tar.gz}
+    mkdir -p "$WORK/source/$component"
+    tar -xzf "$archive" -C "$WORK/source/$component" --strip-components=1
 done
 
 cd "$WORK/source"
