@@ -121,8 +121,11 @@ answering itself. Identifier-property checks include single-word properties.
 The watchdog supervisor dynamically reconciles every registered project/root at
 startup and every five minutes without restarting. One shared worker drains per-root
 queues (at most 500 pending paths each), with three attempts per event and up to
-10,000 files per root scan. New roots join automatically; changed roots are rewatched;
-removed roots stop future work without deleting knowledge. Separately registered
+10,000 files per root scan. Retained roots refresh their complete request context
+and repeat file reconciliation after registry or nested-ownership changes and on
+every periodic pass, recovering queue overflow drops and exhausted retries. New roots
+join automatically; changed roots are rewatched; removed roots stop future work
+without deleting knowledge. Separately registered
 nested roots are pruned from parent events and reconciliation. Ignored directories,
 symlinks, model weights, artifacts and evaluation fixtures are never indexed. Its
 private `.rag-index-state.json` acknowledges only successful, unchanged source

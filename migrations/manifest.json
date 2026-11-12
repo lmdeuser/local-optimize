@@ -716,6 +716,40 @@
           "name": "rag_local_answer_cache_expiry_idx"
         }
       ]
+    },
+    {
+      "version": "v15",
+      "filename": "0015_root_scoped_stable_keys.sql",
+      "checksum": "d02cc8fd36b94bb87b1da8aebd942ea501b3951a4121b0d316af0c85ca32fb69",
+      "required": true,
+      "transactional": true,
+      "invariants": [
+        {
+          "type": "column",
+          "table": "kb_entities",
+          "name": "stable_key"
+        },
+        {
+          "type": "constraint",
+          "table": "kb_entities",
+          "name": "kb_entities_stable_key_unique"
+        },
+        {
+          "type": "index",
+          "table": "kb_relations",
+          "name": "kb_relations_scope_unique"
+        },
+        {
+          "type": "column",
+          "table": "knowledge_provenance",
+          "name": "root_id"
+        },
+        {
+          "type": "index",
+          "table": "knowledge_provenance",
+          "name": "knowledge_provenance_root_source_idx"
+        }
+      ]
     }
   ]
 }

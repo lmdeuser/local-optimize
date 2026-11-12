@@ -1388,9 +1388,15 @@ async def rag_assistant(
     return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
 
 
-if __name__ == "__main__":
-    transport = os.getenv("MCP_TRANSPORT", "stdio")
+def validate_mcp_transport(transport: str) -> str:
     if transport != "stdio":
-        settings.require_safe_bind(MCP_HOST)
+        raise RuntimeError(
+            "MCP network transports are disabled until transport authentication and per-client sessions are implemented; use stdio"
+        )
+    return transport
+
+
+if __name__ == "__main__":
+    transport = validate_mcp_transport(os.getenv("MCP_TRANSPORT", "stdio"))
     logger.info(f"Starting Antigravity MCP Server v5.0 (transport={transport})...")
     mcp.run(transport=transport)

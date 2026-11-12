@@ -44,6 +44,10 @@ class MoveCursor:
         # Only the cache bump reads a single row on this path.
         return (7,)
 
+    @property
+    def rowcount(self):
+        return 0
+
 
 class MoveConnection:
     def __init__(self, fail_on=""):

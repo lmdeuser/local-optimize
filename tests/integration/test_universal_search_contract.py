@@ -207,3 +207,18 @@ def test_http_cwd_rejects_traversal_and_symlink_escape(registry, tmp_path):
         })
         assert response.status_code == 403
         assert engine.calls == []
+
+
+def test_http_search_accepts_filesystem_project_context(registry, tmp_path):
+    context = registry.resolve(
+        project_id="first",
+        root_id="primary",
+        write_visibility="shared",
+        read_scope="shared",
+        agent_id="agent-a",
+        session_id="session-a",
+    ).to_request_dict()
+    engine = SearchEngine()
+    response = run_search(registry, engine, context)
+    assert response.status_code == 200, response.text
+    assert engine.calls[0][0] == "first"

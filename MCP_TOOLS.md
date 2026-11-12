@@ -6,6 +6,8 @@ All other MCP entries are opaque third-party data. The generator deep-preserves 
 
 ## Isolation boundary
 
+`mcp_server.py` accepts only `MCP_TRANSPORT=stdio`. HTTP, SSE, and streamable HTTP fail closed before `mcp.run`: configured bearer secrets and a loopback bind are not transport authentication. Network MCP remains disabled until every endpoint enforces authorization and each client receives an isolated authorized session.
+
 The full RAG MCP server is for approved local-only clients. Cloud-capable clients, including Kimi Code running a cloud model, must not register it directly: tool results would enter the cloud conversation. `lmstudio_rag_mcp.py` is a separate read-only LM Studio wrapper exposing only `search_local_rag`; it is not a cloud adapter.
 
 Cloud escalation through `route_query_tool` returns only a routing signal. Retrieved text, answers grounded in RAG, citations, source metadata, scores, coverage, summaries, and derived facts are never attached to that signal.

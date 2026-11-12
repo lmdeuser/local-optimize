@@ -413,6 +413,7 @@ class ProjectContextRequest(BaseModel):
 
 class KnowledgeContextRequest(BaseModel):
     project_id: Optional[str] = None
+    root_id: Optional[str] = None
     working_directory: Optional[str] = None
     global_search: bool = False
     read_scope: ReadScope = ReadScope.SESSION
@@ -425,10 +426,10 @@ class KnowledgeContextRequest(BaseModel):
     registry_fingerprint: Optional[str] = Field(default=None, min_length=8, max_length=128)
     context_fingerprint: Optional[str] = Field(default=None, min_length=8, max_length=128)
 
-    def to_context(self, *, agent_id: str, session_id: str) -> KnowledgeContext | GlobalKnowledgeContext:
+    def to_context(self, *, agent_id: str, session_id: str) -> KnowledgeContext | ProjectContext | GlobalKnowledgeContext:
         if self.global_search:
-            if self.project_id or self.working_directory:
-                raise HTTPException(status_code=422, detail="global_search cannot be combined with project/cwd")
+            if self.project_id or self.root_id or self.working_directory:
+                raise HTTPException(status_code=422, detail="global_search cannot be combined with project/root/cwd")
             return GlobalKnowledgeContext(
                 read_scope=self.read_scope,
                 agent_id=agent_id,
@@ -438,14 +439,32 @@ class KnowledgeContextRequest(BaseModel):
                 min_score=self.min_score,
                 include_metadata=self.include_metadata,
             )
-        if self.working_directory and self.project_id:
-            raise HTTPException(status_code=422, detail="working_directory cannot be combined with project_id")
+        if self.working_directory and (self.project_id or self.root_id):
+            raise HTTPException(status_code=422, detail="working_directory cannot be combined with project/root")
         if not self.working_directory and not self.project_id:
             raise HTTPException(status_code=422, detail="Explicit project, client working_directory or global_search is required")
+        if self.root_id and not self.project_id:
+            raise HTTPException(status_code=422, detail="root_id requires project_id")
         if not self.working_directory and not self.context_fingerprint and not self.registry_fingerprint:
             raise HTTPException(status_code=422, detail="Context fingerprint is required")
         try:
-            return get_project_registry(settings).resolve_knowledge(
+            registry = get_project_registry(settings)
+            if self.root_id:
+                return registry.resolve(
+                    project_id=self.project_id,
+                    root_id=self.root_id,
+                    write_visibility=WriteVisibility.SESSION_PRIVATE.value,
+                    read_scope=self.read_scope.value,
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    source_types=self.source_types,
+                    language=self.language,
+                    min_score=self.min_score,
+                    include_metadata=self.include_metadata,
+                    registry_fingerprint_hint=self.registry_fingerprint,
+                    context_fingerprint_hint=self.context_fingerprint,
+                )
+            return registry.resolve_knowledge(
                 project_id=self.project_id,
                 working_directory=self.working_directory,
                 read_scope=self.read_scope.value,

@@ -256,6 +256,10 @@ class MoveCursor:
     def fetchall(self):
         return self.rows
 
+    @property
+    def rowcount(self):
+        return 0
+
 
 class MoveConnection:
     def __init__(self, destination):

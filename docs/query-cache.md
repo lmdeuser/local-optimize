@@ -88,7 +88,9 @@ exclusions. An unrelated project does not fragment existing entries. Adding,
 moving or removing a nested root changes the parent's visible area and therefore
 both its search-cache and local-answer-cache keys. File ownership is checked again
 on every result, including L1/L2 hits, so older misattributed rows are omitted.
-Rootless notes remain subject to project, ACL and generation partitioning.
+Rootless notes remain subject to project, ACL and generation partitioning. Routine
+retirement stays sticky across ordinary saves; only an explicit correction or
+re-indexing the exact current source can restore a retired file-backed chunk.
 
 Explicit global search has no combined cross-project answer cache. It reuses these
 independent per-project caches after resolving each current project scope, and

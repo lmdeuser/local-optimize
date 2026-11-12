@@ -35,7 +35,7 @@
 | Файл / Директория | Роль в системе |
 | :--- | :--- |
 | `config.py` | Централизованный менеджер конфигурации и безопасности (`Settings`). Маскирование секретов (`SecretString`), атомарное чтение/запись `~/.config/local-optimize/secrets.env`, валидация SSL, сетевых привязок и лимитов запросов. |
-| `mcp_server.py` | Реализация официального протокола Model Context Protocol (MCP) через `stdio` или HTTP. Предоставляет 14 инструментов для агентов (поиск, сохранение, граф, скиллы, обратная связь, роутинг). |
+| `mcp_server.py` | Реализация официального протокола Model Context Protocol (MCP) только через `stdio`; сетевые транспорты запрещены до появления аутентификации и per-client sessions. Предоставляет 14 инструментов для агентов (поиск, сохранение, граф, скиллы, обратная связь, роутинг). |
 | `rag_client.py` | Легковесный клиент HTTP API к RAG-серверу (`RagClient`). Формирует запросы, строго передает валидированный `ProjectContext`, проверяет канонические статусы ответов (`success`, `error`, `unavailable`). |
 | `rag_engine.py` | Ядро RAG-движка (`RagEngine`). Локальная векторизация, комбинированный поиск (pgvector + FTS), косинусное ранжирование, GraphRAG-обход сущностей, слияние рангов (`compose_final_scores`), парсинг Python AST и управление виртуальной памятью контекста (VMC). |
 | `gpu_rag_server.py` | FastAPI HTTP-сервер (`http://127.0.0.1:8181`). Предоставляет REST API эндпоинты (`/search`, `/agentic-search`, `/save`, `/deprecate`, `/verify`, `/stale_report`, `/index_code`, `/index_document`, `/delete_document`, `/move_document`, `/feedback`, `/consolidate`, `/memory_optimize`, `/liveness`, `/readiness`). Контролирует лимиты тела запроса и готовность подсистем. |

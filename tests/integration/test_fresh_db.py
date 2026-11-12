@@ -47,7 +47,7 @@ def _create_test_database(admin, database_name):
         cursor.execute(query)
 
 
-def test_migrations_on_truly_fresh_database():
+def test_migrations_on_truly_fresh_database(tmp_path):
     admin = _admin_connection()
     database_name = f"local_optimize_test_{secrets.token_hex(8)}"
     database_connection = None
@@ -133,6 +133,76 @@ def test_migrations_on_truly_fresh_database():
                 "WHERE execution_status = 'applied'"
             )
             assert dict(cursor.fetchall()) == expected
+
+            import numpy as np
+            from project_context import configured_context
+            from rag_engine import RagEngine
+
+            root_a = tmp_path / "root-a"
+            root_b = tmp_path / "root-b"
+            root_a.mkdir()
+            root_b.mkdir()
+            source_a = root_a / "same.md"
+            source_b = root_b / "same.md"
+            source_a.write_text("original source content for root isolation", encoding="utf-8")
+            source_b.write_text("different source content for the second root", encoding="utf-8")
+            context_a = configured_context(
+                project_id="project-a", project_name="Project A", root_id="root-a",
+                project_root=root_a, allowed_roots=[root_a], write_visibility="shared",
+                read_scope="shared", agent_id="agent-a", session_id="session-a",
+            )
+            context_b = configured_context(
+                project_id="project-a", project_name="Project A", root_id="root-b",
+                project_root=root_b, allowed_roots=[root_b], write_visibility="shared",
+                read_scope="shared", agent_id="agent-a", session_id="session-a",
+            )
+            engine = object.__new__(RagEngine)
+            engine._get_conn = lambda: database_connection
+            engine._put_conn = lambda *_args, **_kwargs: None
+            engine.encode = lambda *_args, **_kwargs: np.zeros(384, dtype=np.float32)
+            engine._invalidate_search_cache = lambda *_args, **_kwargs: None
+
+            saved_a = engine.save(
+                context_a, source_a.read_text(), source_uri=str(source_a),
+                source_type="document", file_path="same.md",
+            )
+            saved_b = engine.save(
+                context_b, source_b.read_text(), source_uri=str(source_b),
+                source_type="document", file_path="same.md",
+            )
+            assert saved_a["chunk_id"] != saved_b["chunk_id"]
+            assert engine._live_chunk_ids(context_a, "same.md", "document") == {saved_a["chunk_id"]}
+            assert engine._live_chunk_ids(context_b, "same.md", "document") == {saved_b["chunk_id"]}
+
+            assert engine.delete_document(context_a, str(source_a))["deleted_count"] == 1
+            with database_connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT validation_status FROM public.project_knowledge WHERE id = %s",
+                    (saved_b["chunk_id"],),
+                )
+                assert cursor.fetchone()[0] == "unverified"
+
+            engine.save(
+                context_a, source_a.read_text(), source_uri=str(source_a),
+                source_type="document", file_path="same.md",
+            )
+            with database_connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT validation_status FROM public.project_knowledge WHERE id = %s",
+                    (saved_a["chunk_id"],),
+                )
+                assert cursor.fetchone()[0] == "invalidated"
+
+            engine.save(
+                context_a, source_a.read_text(), source_uri=str(source_a),
+                source_type="document", file_path="same.md", restore_source=True,
+            )
+            with database_connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT validation_status FROM public.project_knowledge WHERE id = %s",
+                    (saved_a["chunk_id"],),
+                )
+                assert cursor.fetchone()[0] == "unverified"
     finally:
         if database_connection is not None:
             database_connection.close()

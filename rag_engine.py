@@ -531,6 +531,15 @@ class RagEngine:
                 source_ref or stable_key
             )
         )
+        cur.execute(
+            "UPDATE public.entity_evidence SET is_active = true, validation_status = %s, updated_at = now() "
+            "WHERE entity_id = %s AND project_id = %s AND root_id = %s AND source_ref = %s "
+            "AND visibility = %s AND agent_id IS NOT DISTINCT FROM %s AND session_id IS NOT DISTINCT FROM %s",
+            (
+                context.validation_status.value, entity_id, context.project_id, context.root_id,
+                source_ref or stable_key, vis_val, owner_agent, owner_session,
+            ),
+        )
         return entity_id
 
     def _upsert_relation(self, cur, context, from_id, to_id, relation_type, weight=1.0, source_ref=None):
@@ -569,6 +578,15 @@ class RagEngine:
                 context.validation_status.value,
                 source_ref or f"{from_id}:{to_id}"
             )
+        )
+        cur.execute(
+            "UPDATE public.relation_evidence SET is_active = true, validation_status = %s, updated_at = now() "
+            "WHERE relation_id = %s AND project_id = %s AND root_id = %s AND source_ref = %s "
+            "AND visibility = %s AND agent_id IS NOT DISTINCT FROM %s AND session_id IS NOT DISTINCT FROM %s",
+            (
+                context.validation_status.value, relation_id, context.project_id, context.root_id,
+                source_ref or f"{from_id}:{to_id}", vis_val, owner_agent, owner_session,
+            ),
         )
         return relation_id
 
@@ -1284,7 +1302,7 @@ class RagEngine:
         try:
             from config import build_entity_stable_key
             raw_id, scoped_id = self._scoped_page_id(context, getattr(page, "raw_page_id", page.page_id))
-            s_key = build_entity_stable_key(context.project_id, f"ram/{scoped_id}", "ram_page", scoped_id)
+            s_key = build_entity_stable_key(context, f"ram/{scoped_id}", "ram_page", scoped_id)
             with db_conn.cursor() as cur:
                 # Обновляем основное хранилище сущностей
                 self._upsert_entity(
@@ -1325,8 +1343,8 @@ class RagEngine:
         try:
             from config import build_entity_stable_key
             raw_id, scoped_id = self._scoped_page_id(context, page_id)
-            s_key = build_entity_stable_key(context.project_id, f"ram/{scoped_id}", "ram_page", scoped_id)
-            legacy_key = build_entity_stable_key(context.project_id, f"ram/{raw_id}", "ram_page", raw_id)
+            s_key = build_entity_stable_key(context, f"ram/{scoped_id}", "ram_page", scoped_id)
+            legacy_key = build_entity_stable_key(context, f"ram/{raw_id}", "ram_page", raw_id)
             owner_sql, owner_params = build_owner_scope_sql(context)
             with db_conn.cursor() as cur:
                 cur.execute(
@@ -1775,7 +1793,7 @@ class RagEngine:
                         file_name = os.path.basename(pf)
                         mtime = os.path.getmtime(pf)
                         rel_path = os.path.relpath(pf, active_root)
-                        s_key = build_entity_stable_key(context.project_id, rel_path, "file", rel_path)
+                        s_key = build_entity_stable_key(context, rel_path, "file", rel_path)
                         
                         # Проверяем, когда файл индексировался последний раз
                         with conn.cursor() as cur:
@@ -1821,7 +1839,7 @@ class RagEngine:
                         
                         # Проверяем дату изменения в БД
                         skill_name = f"policy_{file_name.replace('.md', '')}"
-                        s_key = build_entity_stable_key(context.project_id, f"skills/{file_name}", "system_guideline", skill_name)
+                        s_key = build_entity_stable_key(context, f"skills/{file_name}", "system_guideline", skill_name)
                         with conn.cursor() as cur:
                             cur.execute("SELECT metadata FROM kb_entities WHERE stable_key = %s", (s_key,))
                             row = cur.fetchone()
@@ -1874,7 +1892,7 @@ class RagEngine:
                     # Создаем/обновляем сущность скила
                     skill_name = f"policy_{file_name.replace('.md', '')}"
                     from config import build_entity_stable_key
-                    skill_skey = build_entity_stable_key(context.project_id, f"skills/{file_name}", "system_guideline", skill_name)
+                    skill_skey = build_entity_stable_key(context, f"skills/{file_name}", "system_guideline", skill_name)
                     skill_db_id = self._upsert_entity(
                         cur, context, skill_name, skill_skey, 'system_guideline', content,
                         {"file": file_name, "mtime": mtime, "stable_key": skill_skey, "relative_path": f"skills/{file_name}", "project_name": context.project_name},
@@ -2133,10 +2151,10 @@ class RagEngine:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT id FROM public.project_knowledge "
-                    "WHERE project_id = %s AND file_path = %s AND source_type = %s "
+                    "WHERE project_id = %s AND root_id = %s AND file_path = %s AND source_type = %s "
                     f"AND {owner_sql} "
                     "  AND validation_status NOT IN ('invalidated', 'deprecated')",
-                    (context.project_id, relative_path, source_type, *owner_params),
+                    (context.project_id, context.root_id, relative_path, source_type, *owner_params),
                 )
                 return {int(row[0]) for row in cur.fetchall()}
         except Exception:
@@ -2260,6 +2278,7 @@ class RagEngine:
                     start_locator=str(i),
                     end_locator=str(i + 1),
                     invalidate=False,
+                    restore_source=True,
                 )
                 if res.get("status") == "success":
                     success_count += 1
@@ -2459,7 +2478,7 @@ class RagEngine:
                 project_name = context.project_id
                 from config import build_entity_stable_key
 
-                file_skey = build_entity_stable_key(project_name, rel_path, "file", rel_path)
+                file_skey = build_entity_stable_key(context, rel_path, "file", rel_path)
                 created_stable_keys.append(file_skey)
 
                 # Создаем сущность для самого файла
@@ -2517,10 +2536,10 @@ class RagEngine:
                         ast.fix_missing_locations(skeleton_node)
                         skeleton_code = ast.unparse(skeleton_node)
                         skeleton_name = f"{node.name}_Skeleton"
-                        skel_skey = build_entity_stable_key(project_name, rel_path, "skeleton", skeleton_name)
+                        skel_skey = build_entity_stable_key(context, rel_path, "skeleton", skeleton_name)
                         created_stable_keys.append(skel_skey)
 
-                        cls_skey = build_entity_stable_key(project_name, rel_path, "class", node.name)
+                        cls_skey = build_entity_stable_key(context, rel_path, "class", node.name)
                         created_stable_keys.append(cls_skey)
                         skel_desc = f"Интерфейс (Skeleton) класса {node.name} ({rel_path}):\n\n```python\n{skeleton_code}\n```"
                         
@@ -2559,7 +2578,7 @@ class RagEngine:
                             method_full_name = f"{node.name}.{m_node.name}"
                             m_doc = ast.get_docstring(m_node) or f"Метод {m_node.name} класса {node.name}"
                             m_code = ast.unparse(m_node)
-                            mth_skey = build_entity_stable_key(project_name, rel_path, "function", method_full_name)
+                            mth_skey = build_entity_stable_key(context, rel_path, "function", method_full_name)
                             created_stable_keys.append(mth_skey)
                             m_desc = f"{m_doc}\n\n```python\n{m_code}\n```"
                             
@@ -2587,7 +2606,7 @@ class RagEngine:
                         # Глобальная функция на уровне модуля
                         doc = ast.get_docstring(node) or f"Глобальная функция {node.name}"
                         func_code = ast.unparse(node)
-                        func_skey = build_entity_stable_key(project_name, rel_path, "function", node.name)
+                        func_skey = build_entity_stable_key(context, rel_path, "function", node.name)
                         created_stable_keys.append(func_skey)
                         func_desc = f"{doc}\n\n```python\n{func_code}\n```"
                         
@@ -2621,31 +2640,48 @@ class RagEngine:
                     })
 
                 # 3. Мусоросборщик (Garbage Collector):
-                # Находим старые сущности для этого конкретного relative_path и project_name, которых больше нет в коде.
                 owner_sql, owner_params = build_owner_scope_sql(context)
                 with conn.cursor() as cur:
                     cur.execute(
                         "SELECT stable_key, name, id FROM public.kb_entities "
-                        f"WHERE project_id = %s AND metadata->>'relative_path' = %s AND {owner_sql}",
-                        (context.project_id, rel_path, *owner_params),
+                        f"WHERE project_id = %s AND metadata->>'relative_path' = %s AND {owner_sql} "
+                        "AND EXISTS (SELECT 1 FROM public.entity_evidence ee "
+                        "WHERE ee.entity_id = public.kb_entities.id AND ee.project_id = %s AND ee.root_id = %s)",
+                        (context.project_id, rel_path, *owner_params, context.project_id, context.root_id),
                     )
                     existing = cur.fetchall()
-                    
+
                     to_delete_ids = []
                     for ent_skey, ent_name, ent_id in existing:
                         if ent_skey and ent_skey not in created_stable_keys:
                             log.info("AST GC: Удаление устаревшей сущности '%s' (key: %s) в файле '%s'", ent_name, ent_skey, rel_path)
                             to_delete_ids.append(ent_id)
                             invalidated_entities.add(ent_name)
-                            
+
                     if to_delete_ids:
+                        rel_pattern = f"%:{escape_like(rel_path)}:%"
+                        cur.execute(
+                            "DELETE FROM public.entity_evidence WHERE project_id = %s AND root_id = %s "
+                            "AND entity_id = ANY(%s) "
+                            f"AND (source_ref = %s OR source_ref LIKE %s ESCAPE '{LIKE_ESCAPE}')",
+                            (context.project_id, context.root_id, to_delete_ids, rel_path, rel_pattern),
+                        )
+                        cur.execute(
+                            "DELETE FROM public.relation_evidence WHERE project_id = %s AND root_id = %s "
+                            f"AND (source_ref = %s OR source_ref LIKE %s ESCAPE '{LIKE_ESCAPE}')",
+                            (context.project_id, context.root_id, rel_path, rel_pattern),
+                        )
                         cur.execute(
                             "DELETE FROM public.kb_relations WHERE project_id = %s "
-                            "AND (from_id = ANY(%s) OR to_id = ANY(%s))",
+                            "AND (from_id = ANY(%s) OR to_id = ANY(%s)) "
+                            "AND NOT EXISTS (SELECT 1 FROM public.relation_evidence re "
+                            "WHERE re.relation_id = public.kb_relations.id)",
                             (context.project_id, to_delete_ids, to_delete_ids),
                         )
                         cur.execute(
-                            "DELETE FROM public.kb_entities WHERE project_id = %s AND id = ANY(%s)",
+                            "DELETE FROM public.kb_entities WHERE project_id = %s AND id = ANY(%s) "
+                            "AND NOT EXISTS (SELECT 1 FROM public.entity_evidence ee "
+                            "WHERE ee.entity_id = public.kb_entities.id)",
                             (context.project_id, to_delete_ids),
                         )
 
@@ -2705,6 +2741,7 @@ class RagEngine:
                         start_locator=item["start_locator"],
                         end_locator=item["end_locator"],
                         invalidate=False,
+                        restore_source=True,
                     )
                     if save_res.get("status") == "success":
                         written_chunks += 1
@@ -2779,11 +2816,31 @@ class RagEngine:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE public.project_knowledge SET validation_status = 'invalidated' "
-                    f"WHERE project_id = %s AND (source_uri = %s OR file_path = %s) AND {owner_sql} RETURNING id",
-                    (context.project_id, str(file_path_obj), rel_path, *owner_params),
+                    "DELETE FROM public.knowledge_provenance p "
+                    "WHERE p.project_id = %s AND p.root_id = %s "
+                    "AND (p.source_uri = %s OR p.file_path = %s) "
+                    "AND p.knowledge_id IN ("
+                    "SELECT id FROM public.project_knowledge "
+                    f"WHERE project_id = %s AND root_id = %s AND {owner_sql}"
+                    ") RETURNING p.knowledge_id",
+                    (
+                        context.project_id, context.root_id, str(file_path_obj), rel_path,
+                        context.project_id, context.root_id, *owner_params,
+                    ),
                 )
-                affected = len(cur.fetchall())
+                knowledge_ids = sorted({row[0] for row in cur.fetchall()})
+                if knowledge_ids:
+                    cur.execute(
+                        "UPDATE public.project_knowledge k SET validation_status = 'invalidated' "
+                        "WHERE k.project_id = %s AND k.root_id = %s AND k.id = ANY(%s) "
+                        f"AND {owner_sql} "
+                        "AND NOT EXISTS (SELECT 1 FROM public.knowledge_provenance p "
+                        "WHERE p.knowledge_id = k.id) RETURNING k.id",
+                        (context.project_id, context.root_id, knowledge_ids, *owner_params),
+                    )
+                    affected = len(cur.fetchall())
+                else:
+                    affected = 0
                 cur.execute(
                     "DELETE FROM public.relation_evidence "
                     "WHERE project_id = %s AND root_id = %s "
@@ -2835,8 +2892,16 @@ class RagEngine:
         destination = context.validate_path(destination_path, must_exist=True)
         source_relative = str(source.relative_to(Path(context.project_root)))
         destination_relative = str(destination.relative_to(Path(context.project_root)))
-        source_prefix = f"{context.project_id}:{source_relative}:"
-        destination_prefix = f"{context.project_id}:{destination_relative}:"
+        owner_agent = context.agent_id if context.write_visibility.value in ("agent-private", "session-private") else ""
+        owner_session = context.session_id if context.write_visibility.value == "session-private" else ""
+        source_prefix = (
+            f"{context.project_id}:{context.root_id}:{context.write_visibility.value}:"
+            f"{owner_agent}:{owner_session}:{source_relative}:"
+        )
+        destination_prefix = (
+            f"{context.project_id}:{context.root_id}:{context.write_visibility.value}:"
+            f"{owner_agent}:{owner_session}:{destination_relative}:"
+        )
         conn = self._get_conn()
         error = False
         try:
@@ -2845,32 +2910,33 @@ class RagEngine:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT id FROM public.kb_documents "
-                    "WHERE project_id = %s AND file_path = %s AND EXISTS ("
+                    "WHERE project_id = %s AND root_id = %s AND file_path = %s AND EXISTS ("
                     "SELECT 1 FROM public.project_knowledge k "
                     "WHERE k.document_id = public.kb_documents.id AND k.project_id = %s "
+                    "AND k.root_id = public.kb_documents.root_id "
                     f"AND {knowledge_owner_sql}) FOR UPDATE",
                     (
-                        context.project_id, source_relative, context.project_id,
+                        context.project_id, context.root_id, source_relative, context.project_id,
                         *knowledge_owner_params,
                     ),
                 )
                 document_ids = [row[0] for row in cur.fetchall()]
                 cur.execute(
                     "UPDATE public.kb_documents SET file_path = %s, source_uri = %s, "
-                    "updated_at = now() WHERE project_id = %s AND id = ANY(%s) RETURNING id",
+                    "updated_at = now() WHERE project_id = %s AND root_id = %s AND id = ANY(%s) RETURNING id",
                     (
-                        destination_relative, str(destination), context.project_id,
+                        destination_relative, str(destination), context.project_id, context.root_id,
                         document_ids,
                     ),
                 )
                 updated_documents = [row[0] for row in cur.fetchall()]
                 cur.execute(
                     "UPDATE public.project_knowledge k SET file_path = %s, source_uri = %s, "
-                    "updated_at = now() WHERE project_id = %s "
+                    "updated_at = now() WHERE project_id = %s AND root_id = %s "
                     "AND (file_path = %s OR source_uri = %s) "
                     f"AND {knowledge_owner_sql} RETURNING id",
                     (
-                        destination_relative, str(destination), context.project_id,
+                        destination_relative, str(destination), context.project_id, context.root_id,
                         source_relative, str(source), *knowledge_owner_params,
                     ),
                 )
@@ -2919,21 +2985,35 @@ class RagEngine:
                             (reference_key, context.project_id, provenance_id),
                         )
                 cur.execute(
+                    "UPDATE public.entity_evidence SET source_ref = %s, updated_at = now() "
+                    "WHERE project_id = %s AND root_id = %s AND source_ref = %s",
+                    (destination_relative, context.project_id, context.root_id, source_relative),
+                )
+                entity_evidence_count = cur.rowcount
+                cur.execute(
+                    "UPDATE public.relation_evidence SET source_ref = %s, updated_at = now() "
+                    "WHERE project_id = %s AND root_id = %s AND source_ref = %s",
+                    (destination_relative, context.project_id, context.root_id, source_relative),
+                )
+                relation_evidence_count = cur.rowcount
+                cur.execute(
                     "UPDATE public.kb_entities SET stable_key = %s || substring(stable_key from %s), "
                     "metadata = jsonb_set(jsonb_set(metadata, '{relative_path}', to_jsonb(%s::text)), "
                     "'{path}', to_jsonb(%s::text)), updated_at = now() "
                     f"WHERE project_id = %s AND stable_key LIKE %s ESCAPE '{LIKE_ESCAPE}' "
+                    "AND NOT EXISTS (SELECT 1 FROM public.entity_evidence ee "
+                    "WHERE ee.entity_id = public.kb_entities.id AND ee.root_id <> %s) "
                     f"AND {entity_owner_sql} RETURNING id",
                     (
                         destination_prefix, len(source_prefix) + 1, destination_relative,
                         str(destination), context.project_id, escape_like(source_prefix) + "%",
-                        *entity_owner_params,
+                        context.root_id, *entity_owner_params,
                     ),
                 )
                 entity_ids = [row[0] for row in cur.fetchall()]
                 moved_count = (
-                    len(updated_documents) + len(knowledge_ids) +
-                    len(provenance_ids) + len(entity_ids)
+                    len(updated_documents) + len(knowledge_ids) + len(provenance_ids) +
+                    len(entity_ids) + entity_evidence_count + relation_evidence_count
                 )
                 if moved_count == 0:
                     conn.rollback()
@@ -3043,7 +3123,7 @@ class RagEngine:
             # 2. Создаём сущность запуска в графе знаний (kb_entities)
             from config import build_entity_stable_key
             run_name = f"run_{int(time.time())}_{argv[0] if argv else 'unknown'}"
-            s_key = build_entity_stable_key(context.project_id, f"execution:{run_name}", "execution_run", run_name)
+            s_key = build_entity_stable_key(context, f"execution:{run_name}", "execution_run", run_name)
             with conn.cursor() as cur:
                 run_entity_id = self._upsert_entity(
                     cur, context, run_name, s_key, 'execution_run', summary[:500],
@@ -3052,7 +3132,7 @@ class RagEngine:
                 )
                 
             for f_name in mentioned_files:
-                f_skey = build_entity_stable_key(context.project_id, f_name, "file", f_name)
+                f_skey = build_entity_stable_key(context, f_name, "file", f_name)
                 with conn.cursor() as cur:
                     cur.execute(
                         "SELECT id FROM public.kb_entities WHERE project_id = %s "
@@ -3189,6 +3269,7 @@ class RagEngine:
         end_locator: str = "",
         importance: int = 5,
         invalidate: bool = True,
+        restore_source: bool = False,
     ) -> dict:
         """Store one chunk.
 
@@ -3254,11 +3335,13 @@ class RagEngine:
                     # revive a fact somebody retired: agents re-save what they
                     # learn every session, so an unconditional overwrite gave a
                     # correction a shelf life of exactly one routine save.
-                    # Retirement is sticky; only `deprecate` can lift it.
+                    # Retirement is sticky for routine saves. Only `deprecate` or
+                    # re-indexing the exact current source may lift it.
                     "ON CONFLICT (dedup_key) DO UPDATE SET updated_at = now(), "
                     " entity_id = COALESCE(EXCLUDED.entity_id, public.project_knowledge.entity_id), "
                     " metadata = COALESCE(public.project_knowledge.metadata, '{}'::jsonb) || EXCLUDED.metadata, "
                     " validation_status = CASE "
+                    "   WHEN %s THEN EXCLUDED.validation_status "
                     "   WHEN public.project_knowledge.validation_status "
                     "        IN ('deprecated', 'invalidated') "
                     "   THEN public.project_knowledge.validation_status "
@@ -3275,7 +3358,7 @@ class RagEngine:
                         content_clean, document_id, source_uri, source_type, validation_status,
                         owner_agent, owner_session, visibility, importance,
                         EMBEDDING_MODEL_NAME, EMBEDDING_VERSION, EMBEDDING_DIM,
-                        start_locator, end_locator,
+                        start_locator, end_locator, bool(restore_source),
                     ),
                 )
                 upserted = cur.fetchone()
@@ -3284,10 +3367,11 @@ class RagEngine:
                 # authority_weight and therefore the ranking, even when the text
                 # was already there. Routine indexing never asserts one.
                 corpus_changed = (bool(upserted[1]) or str(validation_status) != "unverified"
-                                  or "source_snapshot" in metadata)
+                                  or "source_snapshot" in metadata or restore_source)
                 reference_material = "\x1f".join(
                     (
                         context.project_id,
+                        context.root_id,
                         str(document_id or ""),
                         source_uri,
                         source_type,
@@ -3299,14 +3383,14 @@ class RagEngine:
                 reference_key = hashlib.sha256(reference_material.encode("utf-8"), usedforsecurity=False).hexdigest()
                 cur.execute(
                     "INSERT INTO public.knowledge_provenance "
-                    "(knowledge_id, document_id, project_id, source_uri, source_type, file_path, "
+                    "(knowledge_id, document_id, project_id, root_id, source_uri, source_type, file_path, "
                     " start_locator, end_locator, reference_key, metadata) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                     "ON CONFLICT (knowledge_id, reference_key) DO UPDATE SET metadata = EXCLUDED.metadata",
                     (
-                        chunk_id, document_id, context.project_id, source_uri, source_type,
-                        normalized_file, start_locator, end_locator, reference_key,
-                        json.dumps(metadata),
+                        chunk_id, document_id, context.project_id, context.root_id,
+                        source_uri, source_type, normalized_file, start_locator, end_locator,
+                        reference_key, json.dumps(metadata),
                     ),
                 )
             conn.commit()
@@ -3383,8 +3467,8 @@ class RagEngine:
             scope_sql, scope_params = build_read_scope_sql(
                 context.read_scope.value, context.agent_id, context.session_id
             )
-            where = ["project_id = %s", scope_sql]
-            params: list = [context.project_id, *scope_params]
+            where = ["project_id = %s", "root_id = %s", scope_sql]
+            params: list = [context.project_id, context.root_id, *scope_params]
             if chunk_id is not None:
                 where.append("id = %s")
                 params.append(int(chunk_id))
@@ -3409,6 +3493,15 @@ class RagEngine:
                     [status, json.dumps(provenance), *params],
                 )
                 updated = cur.rowcount
+                evidence_where = " AND ".join(where)
+                for table in ("entity_evidence", "relation_evidence"):
+                    cur.execute(
+                        f"UPDATE public.{table} SET validation_status = %s, is_active = false, updated_at = now() "
+                        "WHERE project_id = %s AND root_id = %s AND ("
+                        f"chunk_id IN (SELECT id FROM public.project_knowledge WHERE {evidence_where}) "
+                        f"OR source_ref IN (SELECT file_path FROM public.project_knowledge WHERE {evidence_where}))",
+                        [status, context.project_id, context.root_id, *params, *params],
+                    )
             conn.commit()
             if updated:
                 self._invalidate_search_cache(context, connection=conn)
@@ -3700,7 +3793,7 @@ class RagEngine:
         scope_key = self._search_scope_key(context, limit)
         if not generation_known:
             # Neither L1 nor L2 can prove its rows survived a peer's mutation.
-            return self._check_source_versions(context.project_id, self._search_via_persistent_cache(
+            return self._check_source_versions_with_provenance(context.project_id, self._search_via_persistent_cache(
                 context, query, limit, generation, scope_key, use_shared_tier=False,
             ))
         normalized_query = str(query).strip()
@@ -3719,7 +3812,7 @@ class RagEngine:
             provenance = dict(result.get("cache") or {})
             provenance["layer"] = "l1"
             result["cache"] = provenance
-        return self._check_source_versions(context.project_id, result)
+        return self._check_source_versions_with_provenance(context.project_id, result)
 
     @staticmethod
     def _check_source_versions(project_id: str, result: dict) -> dict:
@@ -3764,6 +3857,78 @@ class RagEngine:
                 evidence_coverage=0.0,
             )
         return result
+
+    def _check_source_versions_with_provenance(self, project_id: str, result: dict) -> dict:
+        initial = self._check_source_versions(project_id, result)
+        omitted = int(initial.get("unusable_sources_omitted") or 0)
+        if initial.get("status") != "success" or omitted == 0:
+            return initial
+        accepted = list(initial.get("results", []))
+        accepted_ids = {hit.get("chunk_id") for hit in accepted}
+        rejected_hits = [
+            hit for hit in result.get("results", []) if hit.get("chunk_id") not in accepted_ids
+        ]
+        chunk_ids = sorted({int(hit["chunk_id"]) for hit in rejected_hits if hit.get("chunk_id") is not None})
+        if not chunk_ids:
+            return initial
+        get_conn = getattr(self, "_get_conn", None)
+        if get_conn is None:
+            return initial
+        try:
+            conn = get_conn()
+        except Exception:
+            return initial
+        error = False
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT knowledge_id, document_id, source_uri, source_type, file_path, "
+                    "metadata, root_id FROM public.knowledge_provenance "
+                    "WHERE project_id = %s AND knowledge_id = ANY(%s)",
+                    (project_id, chunk_ids),
+                )
+                references = cur.fetchall()
+        except Exception:
+            error = True
+            return initial
+        finally:
+            self._put_conn(conn, error=error)
+        candidates = []
+        for hit in rejected_hits:
+            for knowledge_id, document_id, source_uri, source_type, file_path, ref_metadata, root_id in references:
+                if int(knowledge_id) != int(hit["chunk_id"]):
+                    continue
+                metadata = dict(hit.get("metadata") or {})
+                if isinstance(ref_metadata, dict):
+                    metadata.update(ref_metadata)
+                metadata.pop("entity_id", None)
+                candidates.append({
+                    **hit,
+                    "document_id": document_id,
+                    "source_uri": source_uri,
+                    "source_type": source_type,
+                    "file_path": file_path,
+                    "root_id": root_id or hit.get("root_id"),
+                    "entity_id": None,
+                    "metadata": metadata,
+                })
+        recovered = self._check_source_versions(
+            project_id,
+            dict(result, results=candidates, unusable_sources_omitted=0),
+        )
+        recovered_hits = list(recovered.get("results", []))
+        accepted.extend(recovered_hits)
+        remaining = omitted - len(recovered_hits)
+        output = dict(result, results=accepted, unusable_sources_omitted=remaining)
+        output["top_score"] = accepted[0]["final_score"] if accepted else 0.0
+        if remaining:
+            output["reason"] = recovered.get("reason") or initial.get("reason") or "source_unavailable"
+            output["evidence_coverage"] = 0.0
+        else:
+            output.pop("unusable_sources_omitted", None)
+            output.pop("reason", None)
+            output.pop("evidence_coverage", None)
+        return output
 
     def _search_via_persistent_cache(
         self,
@@ -3849,7 +4014,7 @@ class RagEngine:
                 return docs
             raw["results"] = list({h["chunk_id"]: h for h in
                                    raw.get("results", []) + docs.get("results", [])}.values())
-        raw = self._check_source_versions(context.project_id, raw)
+        raw = self._check_source_versions_with_provenance(context.project_id, raw)
         try:
             hits = self.evidence_ranker.rank(query, raw.get("results", []), limit, context.min_score)
         except Exception as exc:

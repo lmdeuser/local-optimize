@@ -12,13 +12,34 @@ pytestmark = pytest.mark.unit
 
 
 def test_build_entity_stable_key_basic():
-    key = build_entity_stable_key("proj_a", "src/main.py", "function", "main")
-    assert key == "proj_a:src/main.py:function:main"
+    key = build_entity_stable_key("proj_a", "src/main.py", "function", "main", root_id="primary")
+    assert key == "proj_a:primary:shared:::src/main.py:function:main"
+
+
+def test_build_entity_stable_key_separates_roots_and_owner_scopes():
+    arguments = ("proj_a", "src/main.py", "function", "main")
+    first = build_entity_stable_key(*arguments, root_id="backend")
+    second = build_entity_stable_key(*arguments, root_id="frontend")
+    private = build_entity_stable_key(
+        *arguments,
+        root_id="backend",
+        visibility="session-private",
+        agent_id="agent-a",
+        session_id="session-a",
+    )
+    assert first != second
+    assert first != private
+    assert private.startswith("proj_a:backend:session-private:agent-a:session-a:")
+
+
+def test_build_entity_stable_key_requires_root():
+    with pytest.raises(ValueError, match="root_id is required"):
+        build_entity_stable_key("proj_a", "src/main.py", "function", "main")
 
 
 def test_build_entity_stable_key_path_traversal_rejection():
     with pytest.raises(ValueError, match="Path traversal '..' forbidden"):
-        build_entity_stable_key("proj_a", "../etc/passwd", "file", "passwd")
+        build_entity_stable_key("proj_a", "../etc/passwd", "file", "passwd", root_id="primary")
 
 
 def test_build_dedup_scope_tuple():

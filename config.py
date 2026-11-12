@@ -307,34 +307,49 @@ class Settings:
 
 
 def build_entity_stable_key(
-    project_id: str,
+    project_id: Any,
     relative_path: str,
     symbol_type: str,
-    qualified_name: str
+    qualified_name: str,
+    *,
+    root_id: str | None = None,
+    visibility: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
 ) -> str:
-    """
-    Constructs a deterministic stable_key identifier for code/doc entities.
-    Format: <project_id>:<normalized_relative_path>:<symbol_type>:<qualified_name>
+    """Build a deterministic source- and owner-scoped entity key.
 
-    Rules:
-    - Normalizes path separators to '/'
-    - Prohibits '..' inside relative_path
-    - Lowercases symbol_type
-    - Pure deterministic result
+    Pass a ProjectContext as ``project_id`` to derive every scope field from the
+    active root and write visibility. Direct callers must provide ``root_id``.
     """
-    proj = (project_id or "default_project").strip()
-
-    # Path normalization & security validation
+    if hasattr(project_id, "project_id"):
+        context = project_id
+        proj = context.project_id.strip()
+        root_id = context.root_id
+        visibility = context.write_visibility.value
+        agent_id = context.agent_id
+        session_id = context.session_id
+    else:
+        proj = (project_id or "default_project").strip()
+    root = (root_id or "").strip()
+    if not root:
+        raise ValueError("root_id is required for source-scoped stable keys")
+    scope_visibility = (visibility or "shared").strip()
+    if scope_visibility not in {"public", "shared", "agent-private", "session-private"}:
+        raise ValueError(f"Unsupported entity visibility: {scope_visibility}")
+    scope_agent = (agent_id or "").strip() if scope_visibility in {"agent-private", "session-private"} else ""
+    scope_session = (session_id or "").strip() if scope_visibility == "session-private" else ""
     clean_path = (relative_path or "").strip().replace("\\", "/")
-    parts = [p for p in clean_path.split("/") if p and p != "."]
+    parts = [part for part in clean_path.split("/") if part and part != "."]
     if ".." in parts:
         raise ValueError(f"Path traversal '..' forbidden in stable_key relative_path: {relative_path}")
     norm_path = "/".join(parts) if parts else "root"
-
     sym_type = (symbol_type or "concept").strip().lower()
     qual_name = (qualified_name or "").strip()
-
-    return f"{proj}:{norm_path}:{sym_type}:{qual_name}"
+    return (
+        f"{proj}:{root}:{scope_visibility}:{scope_agent}:{scope_session}:"
+        f"{norm_path}:{sym_type}:{qual_name}"
+    )
 
 
 def build_dedup_scope(

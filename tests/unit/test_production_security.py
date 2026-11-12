@@ -161,3 +161,13 @@ def test_mcp_correlation_ignores_client_identity():
     assert correlation["agent_id"] == mcp_server.MCP_AGENT_ID
     assert correlation["session_id"] == mcp_server.MCP_SESSION_ID
     assert correlation["session_id"] != "untrusted-session"
+
+
+
+def test_mcp_network_transports_are_fail_closed():
+    import mcp_server
+
+    assert mcp_server.validate_mcp_transport("stdio") == "stdio"
+    for transport in ("http", "sse", "streamable-http", ""):
+        with pytest.raises(RuntimeError, match="network transports are disabled"):
+            mcp_server.validate_mcp_transport(transport)
