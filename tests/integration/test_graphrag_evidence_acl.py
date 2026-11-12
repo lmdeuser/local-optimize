@@ -232,6 +232,7 @@ def test_feedback_does_not_weaken_another_owners_private_relation(clean_db, rag)
     with clean_db.cursor() as cur:
         cur.execute('SELECT weight FROM public.kb_relations WHERE id = %s', (relation,))
         assert float(cur.fetchone()[0]) == 1.0
-        assert rag._upsert_relation(cur, other, ids[0], ids[2], 'refines', source_ref='foreign') is None
+        independent = rag._upsert_relation(cur, other, ids[0], ids[2], 'refines', source_ref='foreign')
+        assert independent is not None and independent != relation
         cur.execute('SELECT count(*) FROM public.relation_evidence WHERE relation_id = %s AND agent_id = %s', (relation, 'other'))
         assert cur.fetchone()[0] == 0

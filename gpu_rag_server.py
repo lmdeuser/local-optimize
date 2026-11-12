@@ -363,9 +363,10 @@ def get_rag_engine(request: Request) -> RagEngine:
 def require_retrieval_readiness(engine: RagEngine) -> None:
     try:
         require = getattr(engine, "require_readiness", None)
+        check = getattr(engine, "check_readiness", None)
         if callable(require):
             require()
-        elif not engine.check_readiness():
+        elif callable(check) and not check():
             raise RuntimeError("RETRIEVAL_NOT_READY")
     except RuntimeError as exc:
         raise HTTPException(

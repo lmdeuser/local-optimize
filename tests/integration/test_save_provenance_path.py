@@ -105,7 +105,7 @@ def test_same_content_keeps_distinct_provenance_references(tmp_path):
 
     assert first["chunk_id"] == second["chunk_id"] == 42
     assert connection.knowledge_params[0][7] == connection.knowledge_params[1][7]
-    assert connection.provenance_params[0][8] != connection.provenance_params[1][8]
+    assert connection.provenance_params[0][-2] != connection.provenance_params[1][-2]
     assert connection.provenance_params[0][2] == "project-a"
     assert connection.provenance_params[1][2] == "project-a"
 
