@@ -35,7 +35,7 @@ lintian artifacts/debian/local-optimize_1.0.1-0ubuntu4_amd64.deb
 sudo apt install ./artifacts/debian/local-optimize_1.0.1-0ubuntu4_amd64.deb
 ```
 
-Затем настройте секреты и реестр проектов по `/usr/share/doc/local-optimize/docs/installation.md`, выполните `local-optimize migrate`, проверьте health и только после этого включите user services. Не создавайте отдельное окружение в `~/.local/share/local-optimize/venv`: CLI использует `/usr/lib/local-optimize/venv`.
+Затем настройте секреты и реестр проектов по `/usr/share/doc/local-optimize/docs/installation.md`, выполните `local-optimize migrate`, проверьте health и только после этого включите user services. Не создавайте отдельное окружение в `~/.local/share/local-optimize/venv`: CLI использует `/usr/lib/local-optimize/venv`. `local-optimize index` сохраняет каталог вызова через `LOCAL_OPTIMIZE_CALLER_DIR`; при необходимости явный контекст можно задать через `--working-directory`.
 
 ## OBS
 

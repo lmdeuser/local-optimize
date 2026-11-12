@@ -77,3 +77,34 @@ def test_empty_legacy_path_list_does_not_use_default_sources(tmp_path, monkeypat
     assert migrate_secrets(secrets_file=target, legacy_paths=[], environ={})
 
     assert config.load_secrets_file(target)["DB_HOST"] == "127.0.0.1"
+
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "plain",
+        " leading and trailing ",
+        'double"quote',
+        "single'quote",
+        "back\\slash",
+        "dollar$sign",
+        "back`tick",
+        "hash#value",
+        "unicode-пароль",
+        "both'\"$",
+    ],
+)
+def test_secret_values_round_trip_without_distortion(tmp_path, value):
+    target = tmp_path / "secrets.env"
+
+    assert config.save_secrets_file({"DB_PASSWORD": value}, file_path=target)
+
+    assert config.load_secrets_file(target)["DB_PASSWORD"] == value
+
+
+def test_unquoted_edge_quotes_are_not_stripped(tmp_path):
+    target = tmp_path / "secrets.env"
+    target.write_text('DB_PASSWORD=password"\n', encoding="utf-8")
+
+    assert config.load_secrets_file(target)["DB_PASSWORD"] == 'password"'

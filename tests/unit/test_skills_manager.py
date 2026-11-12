@@ -261,3 +261,45 @@ def test_sync_preserves_stale_file_modified_by_user(tmp_path, monkeypatch):
     assert managed.read_text(encoding="utf-8") == "user changed the deployed copy"
     state = json.loads((target / manager.SYNC_STATE_FILENAME).read_text(encoding="utf-8"))
     assert state["files"] == {}
+
+
+
+def test_sync_preserves_unmanaged_active_name_conflict(tmp_path, monkeypatch):
+    _skills_dir, _manifest, target = _configure_sync_target(tmp_path, monkeypatch)
+    conflicting = target / "listed.md"
+    conflicting.write_text("user-owned active skill", encoding="utf-8")
+
+    result = manager.sync_to_targets()[str(target)]
+
+    assert result["copied"] == []
+    assert result["preserved"] == ["listed.md"]
+    assert conflicting.read_text(encoding="utf-8") == "user-owned active skill"
+    state = json.loads((target / manager.SYNC_STATE_FILENAME).read_text(encoding="utf-8"))
+    assert state["files"] == {}
+
+
+def test_sync_preserves_active_file_modified_after_previous_sync(tmp_path, monkeypatch):
+    skills_dir, _manifest, target = _configure_sync_target(tmp_path, monkeypatch)
+    manager.sync_to_targets()
+    conflicting = target / "listed.md"
+    conflicting.write_text("user changed active skill", encoding="utf-8")
+    (skills_dir / "listed.md").write_text("upstream v2", encoding="utf-8")
+
+    result = manager.sync_to_targets()[str(target)]
+
+    assert result["copied"] == []
+    assert result["preserved"] == ["listed.md"]
+    assert conflicting.read_text(encoding="utf-8") == "user changed active skill"
+    state = json.loads((target / manager.SYNC_STATE_FILENAME).read_text(encoding="utf-8"))
+    assert state["files"] == {}
+
+
+def test_sync_updates_unchanged_managed_active_file(tmp_path, monkeypatch):
+    skills_dir, _manifest, target = _configure_sync_target(tmp_path, monkeypatch)
+    manager.sync_to_targets()
+    (skills_dir / "listed.md").write_text("upstream v2", encoding="utf-8")
+
+    result = manager.sync_to_targets()[str(target)]
+
+    assert result["copied"] == ["listed.md"]
+    assert (target / "listed.md").read_text(encoding="utf-8") == "upstream v2"

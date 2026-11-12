@@ -381,7 +381,8 @@ async def load_skills(
                 "file": target_file.name,
                 "version": "1.0.0",
                 "checksum": h[:12],
-                "status": "active"
+                "status": "active",
+                "content": content,
             })
             total_bytes += file_bytes
         except Exception as e:

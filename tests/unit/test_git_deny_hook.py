@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -82,6 +83,11 @@ def test_project_settings_install_fail_closed_guard():
     groups = settings["hooks"]["PreToolUse"]
     commands = [entry["command"] for group in groups for entry in group["hooks"]]
     assert len(commands) == 1
-    script = commands[0].split()[-1]
-    assert Path(script) == HOOK
+    assert "/home/" not in commands[0]
+    expanded = commands[0].replace("${CLAUDE_PROJECT_DIR}", str(ROOT))
+    parts = shlex.split(expanded)
+    assert parts[0] == "/usr/bin/python3"
+    assert Path(parts[1]) == HOOK
+    spaced = commands[0].replace("${CLAUDE_PROJECT_DIR}", "/tmp/checkout with spaces")
+    assert shlex.split(spaced)[1] == "/tmp/checkout with spaces/hooks/deny_git.py"
     assert HOOK.is_file()

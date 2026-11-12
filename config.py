@@ -59,6 +59,57 @@ class SecretString:
         return False
 
 
+def _quote_env_value(value: str) -> str:
+    escaped = (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("$", "$$")
+        .replace("`", "\\`")
+    )
+    return f'"{escaped}"'
+
+
+def _parse_env_value(raw_value: str) -> str:
+    value = raw_value.strip()
+    if value.startswith('"'):
+        if len(value) < 2 or not value.endswith('"'):
+            raise ValueError("Unterminated double-quoted environment value")
+        value = value[1:-1]
+        result = []
+        index = 0
+        while index < len(value):
+            char = value[index]
+            if char == "\\" and index + 1 < len(value):
+                following = value[index + 1]
+                if following in {'"', "$", "\\", "`", "\n"}:
+                    if following != "\n":
+                        result.append(following)
+                    index += 2
+                    continue
+            if char == "$" and index + 1 < len(value) and value[index + 1] == "$":
+                result.append("$")
+                index += 2
+                continue
+            result.append(char)
+            index += 1
+        return "".join(result)
+    if value.startswith("'"):
+        if len(value) < 2 or not value.endswith("'"):
+            raise ValueError("Unterminated single-quoted environment value")
+        return value[1:-1]
+    result = []
+    index = 0
+    while index < len(value):
+        if value[index] == "\\" and index + 1 < len(value):
+            result.append(value[index + 1])
+            index += 2
+        else:
+            result.append(value[index])
+            index += 1
+    return "".join(result)
+
+
 def load_secrets_file(file_path: Path | None = None) -> Dict[str, str]:
     """Reads secrets from ~/.config/local-optimize/secrets.env without logging values."""
     secrets = {}
@@ -71,7 +122,7 @@ def load_secrets_file(file_path: Path | None = None) -> Dict[str, str]:
                     if line and not line.startswith("#") and "=" in line:
                         k, v = line.split("=", 1)
                         k = k.strip()
-                        v = v.strip().strip("'").strip('"')
+                        v = _parse_env_value(v)
                         if k and v:
                             secrets[k] = v
         except Exception as e:
@@ -110,7 +161,7 @@ def save_secrets_file(
                 if k not in OWNED_SECRET_KEYS:
                     continue
                 if k and v is not None and str(v).strip():
-                    tf.write(f"{k}={v}\n")
+                    tf.write(f"{k}={_quote_env_value(v)}\n")
             tf.flush()
             os.fsync(tf.fileno())
 

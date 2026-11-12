@@ -64,10 +64,13 @@ def _canonical_path(value: str | Path, field_name: str, *, must_exist: bool = Fa
     try:
         if must_exist or candidate.exists() or candidate.is_symlink():
             return candidate.resolve(strict=True)
-        parent = candidate.parent.resolve(strict=True)
+        ancestor = candidate.parent
+        while not ancestor.exists() and ancestor != ancestor.parent:
+            ancestor = ancestor.parent
+        parent = ancestor.resolve(strict=True)
         if not parent.is_dir():
             raise ValueError("Path parent must be an existing directory")
-        return parent / candidate.name
+        return parent.joinpath(*candidate.parts[len(parent.parts):])
     except (FileNotFoundError, RuntimeError) as exc:
         raise ValueError("Path or its parent does not exist") from exc
 

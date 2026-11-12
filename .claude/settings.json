@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/python3 /home/dennweiss/apps/local_optimize/hooks/deny_git.py",
+            "command": "/usr/bin/python3 \"${CLAUDE_PROJECT_DIR}/hooks/deny_git.py\"",
             "timeout": 5
           }
         ]

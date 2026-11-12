@@ -64,5 +64,6 @@ case "$command" in
 esac
 
 export PYTHONPATH="$APP_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+export LOCAL_OPTIMIZE_CALLER_DIR="$PWD"
 cd "$APP_ROOT"
 exec "$PYTHON" "$APP_ROOT/$script" "$@"

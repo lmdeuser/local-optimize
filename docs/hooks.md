@@ -79,7 +79,7 @@ closed and produce no candidates.
 
 The versioned `.claude/settings.json` forbids Git interaction by Claude Code in this project. Direct `git` and `gh` rules are backed by `hooks/deny_git.py`, a fail-closed `PreToolUse` guard for every tool. It also blocks shell/Python wrappers, Git-related MCP tools, `.git` metadata, Git libraries, and GitHub or `.git` URLs. Code searches and documentation about Git remain allowed.
 
-The policy is loaded at session start; open a new Claude Code session after pulling it. `permissions.disableBypassPermissionsMode` is set to `disable`, and `.claude/settings.local.json` remains user-owned and unmodified.
+The policy is loaded at session start; open a new Claude Code session after pulling it. `permissions.disableBypassPermissionsMode` is set to `disable`, and `.claude/settings.local.json` remains user-owned and unmodified. The hook command uses `${CLAUDE_PROJECT_DIR}` instead of a developer-specific absolute path, so it works after cloning into any directory, including paths with spaces.
 
 This is tool-runtime enforcement, not an operating-system sandbox. It cannot prove that arbitrary code executed outside Claude Code's tool runtime has no Git access. Such a guarantee requires a separate OS-level sandbox with blocked executables, metadata, credentials, and network protocols.
 

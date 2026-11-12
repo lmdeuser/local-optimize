@@ -111,3 +111,19 @@ def test_partial_index_result_is_not_acknowledged(tmp_path):
     indexer = make_indexer(tmp_path, PartialClient())
 
     assert indexer._process_now("modify", str(path)) is False
+
+
+
+def test_delete_after_recursive_directory_removal_is_processed(tmp_path):
+    import shutil
+
+    nested = tmp_path / "docs" / "subdir"
+    nested.mkdir(parents=True)
+    deleted = nested / "note.md"
+    deleted.write_text("fixture", encoding="utf-8")
+    client = FakeClient()
+    indexer = make_indexer(tmp_path, client)
+    shutil.rmtree(tmp_path / "docs")
+
+    assert indexer._process_now("delete", str(deleted)) is True
+    assert client.calls == [("delete", str(deleted), "project-a")]

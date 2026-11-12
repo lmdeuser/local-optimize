@@ -89,7 +89,7 @@ chmod 600 "$HOME/.config/local-optimize/secrets.env"
 | `DB_SSLMODE` | Один из `disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`. |
 | `RAG_BEARER_TOKEN` | Bearer-токен HTTP/MCP-клиентов. Обязателен для не-loopback bind и рекомендуется всегда. |
 
-SSL-сертификаты при необходимости задаются через `DB_SSLROOTCERT`, `DB_SSLCERT`, `DB_SSLKEY`. Права каталога должны быть `0700`, файла — `0600`. Не копируйте реальный файл обратно в проект и не отправляйте его в Git.
+SSL-сертификаты при необходимости задаются через `DB_SSLROOTCERT`, `DB_SSLCERT`, `DB_SSLKEY`. Права каталога должны быть `0700`, файла — `0600`. Не копируйте реальный файл обратно в проект и не отправляйте его в Git. При программной записи значения используются двойные кавычки и escaping, совместимый с systemd `EnvironmentFile`: кавычки, краевые пробелы, `#`, backslash, `$`, backtick и Unicode сохраняются при round-trip.
 
 `manage_secrets.py` позволяет интерактивно менять основные DB-параметры:
 

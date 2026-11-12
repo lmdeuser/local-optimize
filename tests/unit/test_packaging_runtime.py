@@ -1,6 +1,8 @@
 import hashlib
 import importlib.util
 import json
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -105,3 +107,58 @@ def test_huggingface_staging_excludes_caches_and_onnx(tmp_path):
 def test_blob_path_rejects_non_sha256_digest():
     with pytest.raises(ValueError, match="Invalid Ollama blob digest"):
         stage_runtime.blob_path("md5:abcd")
+
+
+
+def test_launcher_preserves_caller_working_directory(tmp_path):
+    app_root = tmp_path / "app"
+    python = app_root / "venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text(
+        "#!/bin/sh\n"
+        "printf '%s' \"{\\\"caller\\\":\\\"$LOCAL_OPTIMIZE_CALLER_DIR\\\",\\\"script\\\":\\\"$1\\\"}\" "
+        "> \"$LOCAL_OPTIMIZE_ROOT/result.json\"\n",
+        encoding="utf-8",
+    )
+    python.chmod(0o755)
+    caller = tmp_path / "caller project"
+    caller.mkdir()
+    environment = dict(os.environ, LOCAL_OPTIMIZE_ROOT=str(app_root))
+    launcher = Path(__file__).parents[2] / "packaging" / "local-optimize"
+
+    finished = subprocess.run(
+        [str(launcher), "index"],
+        cwd=caller,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert finished.returncode == 0, finished.stderr
+    result = json.loads((app_root / "result.json").read_text(encoding="utf-8"))
+    assert result["caller"] == str(caller)
+    assert result["script"].endswith("index_project_codebase.py")
+
+
+def test_index_all_uses_launcher_caller_directory(tmp_path, monkeypatch):
+    import index_project_codebase
+
+    caller = tmp_path / "caller project"
+    caller.mkdir()
+    monkeypatch.setenv("LOCAL_OPTIMIZE_CALLER_DIR", str(caller))
+    captured = {}
+
+    def fake_context(_settings, **_kwargs):
+        captured.update(_kwargs)
+        return type("Context", (), {"project_root": caller})()
+
+    class FakeEngine:
+        def close(self):
+            return None
+
+    monkeypatch.setattr(index_project_codebase, "build_default_project_context", fake_context)
+    monkeypatch.setattr(index_project_codebase, "RagEngine", FakeEngine)
+
+    assert index_project_codebase.index_all() == 0
+    assert captured["working_directory"] == str(caller)

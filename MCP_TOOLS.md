@@ -26,7 +26,7 @@ Search, agentic search, and save expose one explicit context selector and access
 
 `mcp_server.py` exposes 14 tools:
 
-- `load_skills`: strict manifest-only, bounded session loading.
+- `load_skills`: strict manifest-only, bounded session loading. Each loaded item includes the actual bounded skill `content` alongside its filename, checksum and active status, so the client receives the instructions rather than only a server-side cache marker.
 - `rag_search`: scoped hybrid retrieval followed by final evidence ranking.
 - `rag_agentic_search`: bounded ID-based relation traversal with evidence ACL.
 - `rag_save`: atomic canonical-content UPSERT plus provenance link.

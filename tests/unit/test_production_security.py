@@ -97,12 +97,11 @@ def test_registry_requires_existing_directory_and_fails_closed_on_hint(tmp_path)
         )
 
 
-def test_validate_path_rejects_nonexistent_parent_and_broken_symlink(tmp_path):
+def test_validate_path_allows_missing_ancestors_and_rejects_broken_symlink(tmp_path):
     root = tmp_path / "root"
     root.mkdir()
     context = _context(root)
-    with pytest.raises(ValueError, match="parent"):
-        context.validate_path(root / "missing" / "new.py")
+    assert context.validate_path(root / "missing" / "new.py") == root / "missing" / "new.py"
     (root / "link").symlink_to(tmp_path / "outside" / "new.py")
     with pytest.raises(ValueError, match="does not exist"):
         context.validate_path(root / "link")
@@ -171,3 +170,20 @@ def test_mcp_network_transports_are_fail_closed():
     for transport in ("http", "sse", "streamable-http", ""):
         with pytest.raises(RuntimeError, match="network transports are disabled"):
             mcp_server.validate_mcp_transport(transport)
+
+
+
+def test_load_skills_returns_bounded_skill_content():
+    import asyncio
+    import mcp_server
+
+    result = json.loads(asyncio.run(mcp_server.load_skills(
+        ["python-engineering"], agent_id="test-agent", session_id="test-session"
+    )))
+
+    assert result["status"] == "success"
+    loaded = result["loaded"][0]
+    assert loaded["skill"] == "python-engineering"
+    assert loaded["status"] == "active"
+    assert loaded["content"].startswith("# Python Architecture and Engineering Standards")
+    assert len(loaded["content"].encode("utf-8")) < 500 * 1024

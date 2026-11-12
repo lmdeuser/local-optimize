@@ -13,13 +13,16 @@ from rag_engine import RagEngine
 
 
 def index_all(project_id: str = "", root_id: str = "", working_directory: str = "") -> int:
+    caller_directory = working_directory or (
+        "" if project_id else os.environ.get("LOCAL_OPTIMIZE_CALLER_DIR", str(Path.cwd()))
+    )
     context = build_default_project_context(
         settings,
         agent_id="project-indexer",
         session_id="manual-index",
         project_id=project_id or None,
         root_id=root_id or None,
-        working_directory=(working_directory or ("" if project_id else str(Path.cwd()))) or None,
+        working_directory=caller_directory or None,
         write_visibility=os.getenv("INDEX_VISIBILITY", "shared"),
         read_scope="shared",
         validation_status="unverified",

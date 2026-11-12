@@ -341,12 +341,24 @@ def sync_to_targets(dry_run: bool = False, clean_stale: bool = True) -> dict[str
                 target_dir.mkdir(parents=True, exist_ok=True)
             for filename, metadata in primary.items():
                 destination = target_dir / filename
-                if destination.exists() and get_file_hash(destination) == metadata["checksum"]:
-                    details["skipped"].append(filename)
-                else:
-                    if not dry_run:
-                        shutil.copy2(metadata["path"], destination)
-                    details["copied"].append(filename)
+                if destination.is_symlink() or (destination.exists() and not destination.is_file()):
+                    details["preserved"].append(filename)
+                    managed.pop(filename, None)
+                    continue
+                if destination.exists():
+                    current_checksum = get_file_hash(destination)
+                    if current_checksum == metadata["checksum"]:
+                        details["skipped"].append(filename)
+                        managed[filename] = metadata["checksum"]
+                        continue
+                    previous_checksum = managed.get(filename)
+                    if previous_checksum is None or current_checksum != previous_checksum:
+                        details["preserved"].append(filename)
+                        managed.pop(filename, None)
+                        continue
+                if not dry_run:
+                    shutil.copy2(metadata["path"], destination)
+                details["copied"].append(filename)
                 managed[filename] = metadata["checksum"]
             if clean_stale and target_dir.exists():
                 for filename, checksum in list(managed.items()):

@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from config import OWNED_SECRET_KEYS, SECRETS_FILE, load_secrets_file, save_secrets_file
+from config import OWNED_SECRET_KEYS, SECRETS_FILE, _parse_env_value, load_secrets_file, save_secrets_file
 
 log = logging.getLogger("local_optimize.secret_migrator")
 
@@ -38,7 +38,7 @@ def _read_env_file(file_path: Path) -> dict[str, str]:
         key = key.removeprefix("export ").strip()
         if key not in ALLOWED_SECRET_KEYS:
             continue
-        normalized = value.strip().strip("'").strip('"')
+        normalized = _parse_env_value(value)
         if normalized:
             result[key] = normalized
     return result
