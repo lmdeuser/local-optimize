@@ -1,0 +1,50 @@
+{
+  "format": 1,
+  "files": [
+    {
+      "target": "venv/lib/python3.14/site-packages/torch/lib/libtorch_xpu.so",
+      "parts": [
+        "venv/lib/python3.14/site-packages/torch/lib/libtorch_xpu.so.part00000",
+        "venv/lib/python3.14/site-packages/torch/lib/libtorch_xpu.so.part00001"
+      ],
+      "sha256": "247899a8c4c7406f4488a3a07f1f39aa80bcef22a879281cfb26bf1cef5c5626",
+      "mode": 509
+    },
+    {
+      "target": "venv/lib/python3.14/site-packages/triton/_C/libtriton.so",
+      "parts": [
+        "venv/lib/python3.14/site-packages/triton/_C/libtriton.so.part00000",
+        "venv/lib/python3.14/site-packages/triton/_C/libtriton.so.part00001",
+        "venv/lib/python3.14/site-packages/triton/_C/libtriton.so.part00002"
+      ],
+      "sha256": "767319427fe09d7f97e74ac5a18a71694980ab69cf8b5cf2e0c7703748a11dfd",
+      "mode": 509
+    },
+    {
+      "target": "models/Qwen3-Reranker-0.6B/model.safetensors",
+      "parts": [
+        "models/Qwen3-Reranker-0.6B/model.safetensors.part00000",
+        "models/Qwen3-Reranker-0.6B/model.safetensors.part00001",
+        "models/Qwen3-Reranker-0.6B/model.safetensors.part00002"
+      ],
+      "sha256": "27cd75a405b9c1b46b59abfd88aaa209e6fed2a1972cde9b70e7659537c5e65b",
+      "mode": 436
+    },
+    {
+      "target": "ollama-models/blobs/sha256-60e05f2100071479f596b964f89f510f057ce397ea22f2833a0cfe029bfc2463",
+      "parts": [
+        "ollama-models/blobs/sha256-60e05f2100071479f596b964f89f510f057ce397ea22f2833a0cfe029bfc2463.part00000",
+        "ollama-models/blobs/sha256-60e05f2100071479f596b964f89f510f057ce397ea22f2833a0cfe029bfc2463.part00001",
+        "ollama-models/blobs/sha256-60e05f2100071479f596b964f89f510f057ce397ea22f2833a0cfe029bfc2463.part00002",
+        "ollama-models/blobs/sha256-60e05f2100071479f596b964f89f510f057ce397ea22f2833a0cfe029bfc2463.part00003",
+        "ollama-models/blobs/sha256-60e05f2100071479f596b964f89f510f057ce397ea22f2833a0cfe029bfc2463.part00004",
+        "ollama-models/blobs/sha256-60e05f2100071479f596b964f89f510f057ce397ea22f2833a0cfe029bfc2463.part00005",
+        "ollama-models/blobs/sha256-60e05f2100071479f596b964f89f510f057ce397ea22f2833a0cfe029bfc2463.part00006",
+        "ollama-models/blobs/sha256-60e05f2100071479f596b964f89f510f057ce397ea22f2833a0cfe029bfc2463.part00007",
+        "ollama-models/blobs/sha256-60e05f2100071479f596b964f89f510f057ce397ea22f2833a0cfe029bfc2463.part00008"
+      ],
+      "sha256": "60e05f2100071479f596b964f89f510f057ce397ea22f2833a0cfe029bfc2463",
+      "mode": 420
+    }
+  ]
+}

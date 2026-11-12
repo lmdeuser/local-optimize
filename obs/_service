@@ -1,0 +1,8 @@
+<services>
+  <service name="gbp_scm" mode="serveronly">
+    <param name="url">https://github.com/lmdeuser/local-optimize.git</param>
+    <param name="scm">git</param>
+    <param name="revision">main</param>
+    <param name="gbp-build-args">-nc -uc -us -S --git-upstream-tree=HEAD --git-ignore-branch</param>
+  </service>
+</services>

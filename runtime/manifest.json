@@ -1,0 +1,42 @@
+{
+  "format": 1,
+  "payload_sha256": {
+    "models": "27d326e8514f7de732d67e74ac2f8c596024d95127aeb35f00095a2b07cd998a",
+    "ollama-models": "748cdd1aa925a4a859e7ec1ca85cff623ed88150e059e32bf085718355b2b441",
+    "requirements.lock": "fee0b92acdb6ef55ef81616e537a4825897441a450612dd4e2e00cf02b653af0",
+    "venv": "dad937d1f31c2d6fc0a65718999791c74cfbeddf9292f00ffbc3cbb61d4453bb"
+  },
+  "policy": {
+    "install_root": "/usr/lib/local-optimize",
+    "models": {
+      "Qwen3-Reranker-0.6B": {
+        "repository": "Qwen/Qwen3-Reranker-0.6B",
+        "required_files": [
+          "config.json",
+          "model.safetensors",
+          "tokenizer.json",
+          "tokenizer_config.json"
+        ],
+        "revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473"
+      },
+      "multilingual-e5-small": {
+        "repository": "intfloat/multilingual-e5-small",
+        "required_files": [
+          "config.json",
+          "model.safetensors",
+          "modules.json",
+          "sentencepiece.bpe.model",
+          "tokenizer.json"
+        ],
+        "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3"
+      }
+    },
+    "ollama": {
+      "manifest_sha256": "dae161e27b0e90dd1856c8bb3209201fd6736d8eb66298e75ed87571486f4364",
+      "model": "qwen2.5-coder:7b",
+      "repository": "library/qwen2.5-coder",
+      "tag": "7b"
+    },
+    "python": "3.14"
+  }
+}
