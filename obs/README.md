@@ -8,24 +8,15 @@ Target project and package:
 
 The package contains compiled Python 3.14/XPU dependencies and pinned models. It is intentionally specific to Ubuntu 26.04/amd64; Ubuntu 24.04 is not a compatible target for this payload.
 
-## Build source artifacts locally
+## Cloud-only build policy
 
-From the Git repository root:
+All source-package generation, runtime staging, binary builds, and package verification MUST run in the cloud release infrastructure. OBS is the build authority. Never run `packaging/build-deb.sh` (including `SOURCE_ONLY=1`), `dpkg-buildpackage`, payload-staging scripts, or `lintian` on locally built packages in the workspace.
 
-```bash
-SOURCE_ONLY=1 packaging/build-deb.sh
-```
+The local workspace may only receive ready packages produced by OBS. Never upload locally generated DEB, orig tar, component tar, Debian tar, or DSC files. Accidentally created local build artifacts, caches, diagnostic directories, and temporary worktrees must be removed.
 
-The script copies only tracked source files, then creates the complete runtime in a temporary build directory. `SOURCE_ONLY=1` avoids a redundant local binary build; OBS builds the `.deb` on its workers. Outputs in `artifacts/debian/` include:
+Release inputs must be assembled from tracked Git sources by authorized cloud release automation. If that automation is unavailable, leave the release unpublished rather than building locally. Secrets, agent configuration, Git-ignored notes, and unrelated untracked files must never enter release inputs.
 
-- `local-optimize_1.0.1.orig.tar.gz` with source and manifests;
-- multiple `local-optimize_1.0.1.orig-runtime-*.tar.gz` components with the generated venv and pinned models;
-- `local-optimize_1.0.1-0ubuntu4.dsc` and `local-optimize_1.0.1-0ubuntu4.debian.tar.xz`;
-- source changes files.
-
-Components are limited to 512 MiB before compression so OBS does not have to accept one multi-gigabyte request. Oversized files are split and reassembled with SHA-256 verification during the OBS build. Upload the main orig tar, every runtime component, Debian tar and `.dsc`. Never upload secrets, agent configuration or unrelated local artifacts.
-
-For a separate local binary verification run `packaging/build-deb.sh` without `SOURCE_ONLY` and then `lintian artifacts/debian/local-optimize_1.0.1-0ubuntu4_amd64.deb`.
+Components are limited to 512 MiB before compression. Oversized files are split and reassembled with SHA-256 verification during the cloud build. A release is accepted only when OBS reports `succeeded`; a local `.deb` is never a substitute.
 
 ## Create or update OBS metadata
 
@@ -38,34 +29,20 @@ osc -A https://api.opensuse.org api -X PUT \
   -f obs/package.xml /source/home:dwolfF:local-optimize/local-optimize/_meta
 ```
 
-## Upload a source package
+## Inspect the cloud build
 
-```bash
-mkdir -p artifacts/obs
-osc -A https://api.opensuse.org checkout \
-  home:dwolfF:local-optimize/local-optimize \
-  -o artifacts/obs/local-optimize
-cp artifacts/debian/local-optimize_1.0.1*.tar.gz \
-   artifacts/debian/local-optimize_1.0.1-0ubuntu4.dsc \
-   artifacts/debian/local-optimize_1.0.1-0ubuntu4.debian.tar.xz \
-   artifacts/obs/local-optimize/
-cd artifacts/obs/local-optimize
-osc add local-optimize_1.0.1*.tar.gz \
-        local-optimize_1.0.1-0ubuntu4.dsc \
-        local-optimize_1.0.1-0ubuntu4.debian.tar.xz
-osc commit -m "Build local-optimize 1.0.1-0ubuntu4 for Ubuntu 26.04"
-```
+The authorized cloud release workflow updates OBS sources from tracked Git inputs. Do not replace it with an `osc checkout` workflow that copies locally generated source archives into OBS.
 
-Inspect results and logs:
+Inspect cloud results and logs:
 
 ```bash
 osc -A https://api.opensuse.org results \
   home:dwolfF:local-optimize local-optimize
-cd artifacts/obs/local-optimize
-osc -A https://api.opensuse.org buildlog xUbuntu_26.04 x86_64
+osc -A https://api.opensuse.org remotebuildlog \
+  home:dwolfF:local-optimize local-optimize xUbuntu_26.04 x86_64
 ```
 
-The build is accepted only when OBS reports `succeeded`. A local `.deb` alone is not proof of an OBS build.
+The build is accepted only when OBS reports `succeeded`. Only then may its ready packages be downloaded into the local workspace or installed from the APT repository.
 
 ## Repository
 

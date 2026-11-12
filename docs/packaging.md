@@ -14,22 +14,19 @@
 
 Системными prerequisites остаются Intel driver/OpenCL ICD, PostgreSQL 18/pgvector и установленные Ollama binary/service. Пакет не создаёт БД, секреты, projects registry или конфигурацию агентов и не включает user services до настройки `secrets.env`. Корневая файловая система с runtime должна находиться на SSD.
 
-## Локальная сборка
+## Только облачная сборка
 
-Требуются `build-essential`, `debhelper`, Python 3.14 с `venv`, `python3-pip`, `lintian`, сеть и достаточное место для автономного runtime. Из корня репозитория:
+Сборка пакетов, формирование исходных архивов, подготовка runtime, сборка DEB и проверка пакетов выполняются **только в облачной release-инфраструктуре**. OBS является обязательным build authority. Локальный запуск `packaging/build-deb.sh` (включая `SOURCE_ONLY=1`), `dpkg-buildpackage`, сценариев подготовки payload и `lintian` для локально собранных пакетов запрещён.
 
-```bash
-packaging/build-deb.sh
-lintian artifacts/debian/local-optimize_1.0.1-0ubuntu4_amd64.deb
-```
+В локальный workspace разрешено только скачивать готовые пакеты, созданные OBS. Локально созданные `.deb`, `.dsc`, orig tar, `orig-runtime-*.tar.gz` и Debian tar не считаются релизными артефактами и не должны загружаться в OBS. Если такие файлы или временные build/cache/diagnostic-каталоги были созданы случайно, работу нужно остановить и удалить их.
 
-Скрипт копирует только tracked-файлы, создаёт venv и скачивает/копирует модели в изолированный каталог `artifacts/deb-build.*`. `TMPDIR` и pip cache по умолчанию находятся там же и удаляются после сборки. Можно заранее задать `PIP_CACHE_DIR` и `OLLAMA_MODELS_SOURCE` для повторного использования проверенных входов. `packaging/runtime-policy.json` фиксирует revisions и digest; `runtime/manifest.json` в пакете содержит SHA-256 payload.
+Релиз принимается только со статусом OBS `succeeded` для `xUbuntu_26.04`/`x86_64`. Если облачная release-автоматизация недоступна, релиз остаётся неопубликованным: локальная сборка не является запасным вариантом.
 
-Результат включает `_amd64.deb`, `.dsc`, основной orig tar, несколько `orig-runtime-*.tar.gz` и Debian tar. Компоненты ограничены 512 МиБ до сжатия; большие файлы разбиваются и собираются с проверкой SHA-256 на этапе сборки. Это позволяет OBS принимать payload отдельными запросами вместо одного архива 7,8 ГБ. Локальные секреты, Git-игнорируемые заметки и произвольные untracked-файлы в пакет не попадают. Для публикации используйте `SOURCE_ONLY=1 packaging/build-deb.sh`, чтобы бинарный DEB собирал OBS.
+`packaging/runtime-policy.json` фиксирует revisions и digest; `runtime/manifest.json` в готовом пакете содержит SHA-256 payload. Компоненты ограничены 512 МиБ до сжатия; большие файлы разбиваются и собираются с проверкой SHA-256 во время облачной сборки. Секреты, Git-игнорируемые заметки и произвольные untracked-файлы не должны попадать в release inputs.
 
 ## Установка DEB
 
-После проверки пакета администратор может установить его:
+После скачивания готового пакета, собранного OBS со статусом `succeeded`, администратор может установить его:
 
 ```bash
 sudo apt install ./artifacts/debian/local-optimize_1.0.1-0ubuntu4_amd64.deb
@@ -39,7 +36,7 @@ sudo apt install ./artifacts/debian/local-optimize_1.0.1-0ubuntu4_amd64.deb
 
 ## OBS
 
-Текущая цель: `home:dwolfF:local-optimize/local-optimize`, репозиторий `xUbuntu_26.04`, архитектура `x86_64`. Команды публикации и проверки находятся в `obs/README.md`. Локальная сборка не считается успешной OBS-сборкой: требуется статус `succeeded`.
+Текущая цель: `home:dwolfF:local-optimize/local-optimize`, репозиторий `xUbuntu_26.04`, архитектура `x86_64`. Требования к облачному релизу и команды проверки статуса находятся в `obs/README.md`. Локальная сборка запрещена и не считается успешной OBS-сборкой: требуется статус `succeeded`.
 
 ## Подключение APT-репозитория
 
