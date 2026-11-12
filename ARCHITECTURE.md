@@ -65,6 +65,8 @@ Every response carries one of three canonical status values: `success`, `error`,
 - `GET /liveness` returns HTTP 200 with `{"status":"success"}` and checks only the HTTP process.
 - `GET /readiness` returns HTTP 200 with `{"status":"success","ready":true}` only after engine, PostgreSQL, migration version, schema invariants, and a minimal query are ready.
 - An unavailable dependency returns HTTP 503 with `{"status":"unavailable","ready":false}` and a safe non-secret reason. The recoverable engine state retries initialization after a bounded interval without claiming readiness.
+- `POST /search` and `POST /agentic-search` enforce the same readiness through the engine's 30-second cached state and return HTTP 503 instead of serving stale or mixed-model vectors.
+- `POST /index_code` keeps canonical `status=success` and reports partial outcomes separately through `index_mode` and `completed`; watchdog acknowledges only completed work.
 
 ## Installation Path
 

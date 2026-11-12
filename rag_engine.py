@@ -1032,6 +1032,20 @@ class RagEngine:
             return False
         return True
 
+    def require_readiness(self) -> None:
+        if getattr(self, "_pool", None) is None:
+            return
+        now = time.monotonic()
+        cached = getattr(self, "_readiness_cache", None)
+        if cached is not None and now - cached[0] < 30.0:
+            if not cached[1]:
+                raise RuntimeError("RETRIEVAL_NOT_READY")
+            return
+        ready = bool(self.check_readiness())
+        self._readiness_cache = (now, ready)
+        if not ready:
+            raise RuntimeError("RETRIEVAL_NOT_READY")
+
     def _sanitize_context(self, content: str) -> str:
         """Обёртка контекста в safety layer для защиты от indirect prompt injection."""
         return (
@@ -1689,11 +1703,10 @@ class RagEngine:
             # Применяем санитизацию контекста (Phase 3.4) для защиты от indirect prompt injection
             sanitized_hits = []
             for hit in top_hits[:limit]:
-                sanitized_hits.append({
-                    "content": self._sanitize_context(hit["content"]),
-                    "metadata": hit.get("metadata", {}),
-                    "score": hit.get("score", 0.0)
-                })
+                sanitized_hit = dict(hit)
+                sanitized_hit["content"] = self._sanitize_context(hit["content"])
+                sanitized_hit["content_transform"] = "context_safety_layer"
+                sanitized_hits.append(sanitized_hit)
 
             sanitized_graph = []
             for item in graph_context:
@@ -3785,6 +3798,7 @@ class RagEngine:
         """
         if not isinstance(context, (ProjectContext, KnowledgeContext)):
             raise TypeError("search requires ProjectContext or KnowledgeContext")
+        self.require_readiness()
         limit = max(1, min(int(limit), MAX_LIMIT))
         self._ensure_query_caches()
         generation, generation_known = self._project_cache_generation(

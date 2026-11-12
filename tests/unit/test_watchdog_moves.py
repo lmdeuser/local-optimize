@@ -97,3 +97,17 @@ def test_fallback_does_not_depend_on_a_developer_home():
 
     assert 'Path("/home/' not in source
     assert BASE_DIR == settings.project_root
+
+
+
+def test_partial_index_result_is_not_acknowledged(tmp_path):
+    path = tmp_path / "source.py"
+    path.write_text("value = 1\n")
+
+    class PartialClient(FakeClient):
+        def index_code(self, path, *, context):
+            return {"status": "success", "index_mode": "partial", "completed": False}
+
+    indexer = make_indexer(tmp_path, PartialClient())
+
+    assert indexer._process_now("modify", str(path)) is False

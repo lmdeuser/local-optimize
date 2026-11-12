@@ -94,3 +94,17 @@ def test_readiness_passes_when_the_store_is_uniform(monkeypatch):
     engine.embedding_consistency = lambda: {"consistent": True, "mismatched_rows": 0}
 
     assert engine.check_readiness() is True
+
+
+
+def test_retrieval_readiness_is_cached_for_thirty_seconds():
+    from unittest.mock import Mock
+
+    engine = object.__new__(rag_engine.RagEngine)
+    engine._pool = object()
+    engine.check_readiness = Mock(return_value=True)
+
+    engine.require_readiness()
+    engine.require_readiness()
+
+    assert engine.check_readiness.call_count == 1

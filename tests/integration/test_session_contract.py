@@ -262,3 +262,58 @@ def test_rag_client_passes_header_from_context():
         client.save(content="test content long enough", context=context_b)
         req = mock_urlopen.call_args[0][0]
         assert req.headers.get("X-local-rag-session") == "sessionB-1234567"
+
+
+
+def test_search_is_blocked_when_readiness_fails(client, engine, monkeypatch):
+    monkeypatch.setattr(
+        engine,
+        "require_readiness",
+        lambda: (_ for _ in ()).throw(RuntimeError("RETRIEVAL_NOT_READY")),
+        raising=False,
+    )
+    payload = {
+        "context": {
+            "project_id": "local_optimize",
+            "root_id": "primary",
+            "write_visibility": "session-private",
+            "read_scope": "session",
+            "registry_fingerprint": SERVER_PROJECT_REGISTRY.fingerprint,
+            "agent_id": settings.server_agent_id,
+        },
+        "query": "must not run",
+        "limit": 1,
+    }
+
+    response = client.post("/search", headers={"X-Local-RAG-Session": "session-test-123456"}, json=payload)
+
+    assert response.status_code == 503
+    assert engine.search_called_with is None
+
+
+def test_partial_index_uses_canonical_status_and_mode(client, engine, monkeypatch):
+    monkeypatch.setattr(
+        engine,
+        "index_code",
+        lambda *_args, **_kwargs: {"status": "partial", "partial": True},
+        raising=False,
+    )
+    payload = {
+        "context": {
+            "project_id": "local_optimize",
+            "root_id": "primary",
+            "write_visibility": "session-private",
+            "read_scope": "session",
+            "registry_fingerprint": SERVER_PROJECT_REGISTRY.fingerprint,
+            "agent_id": settings.server_agent_id,
+        },
+        "path": "tests/integration/test_session_contract.py",
+    }
+
+    response = client.post("/index_code", headers={"X-Local-RAG-Session": "session-test-123456"}, json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+    assert response.json()["index_mode"] == "partial"
+    assert response.json()["completed"] is False
+    assert RagClient.__new__(RagClient)._validate_response("/index_code", response.content) == response.json()

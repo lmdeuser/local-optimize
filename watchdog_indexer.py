@@ -127,7 +127,10 @@ class DebouncedIndexer:
                     result = self.client.index_document(str(path), context=self.context)
                 else:
                     return False
-                return result.get("status") in ("success", "ok", "fallback_success")
+                return (
+                    result.get("status") in ("success", "ok", "fallback_success")
+                    and result.get("completed", True)
+                )
             if action == "delete":
                 if not source_allowed:
                     return False

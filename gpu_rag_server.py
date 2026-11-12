@@ -360,6 +360,20 @@ def get_rag_engine(request: Request) -> RagEngine:
     return engine
 
 
+def require_retrieval_readiness(engine: RagEngine) -> None:
+    try:
+        require = getattr(engine, "require_readiness", None)
+        if callable(require):
+            require()
+        elif not engine.check_readiness():
+            raise RuntimeError("RETRIEVAL_NOT_READY")
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": {"code": "RETRIEVAL_NOT_READY", "message": "Retrieval is not ready"}}
+        ) from exc
+
+
 class ProjectContextRequest(BaseModel):
     project_id: Optional[str] = None
     root_id: Optional[str] = None
@@ -762,6 +776,7 @@ async def search(
     request: Request,
     engine: RagEngine = Depends(get_rag_engine)
 ):
+    require_retrieval_readiness(engine)
     context = req.context.to_context(
         agent_id=request.state.agent_id, session_id=request.state.session_id
     )
@@ -1006,6 +1021,7 @@ async def agentic_search(
     request: Request,
     engine: RagEngine = Depends(get_rag_engine)
 ):
+    require_retrieval_readiness(engine)
     context = req.context.to_context(
         agent_id=request.state.agent_id, session_id=request.state.session_id
     )
@@ -1373,8 +1389,12 @@ async def index_code(req: IndexRequest, request: Request, engine: RagEngine = De
         raw_status = result.get("status", BACKEND_SUCCESS)
         if raw_status not in (BACKEND_SUCCESS, "ok", "partial", "fallback_success"):
             raise RuntimeError("index backend returned an error status")
-        out_status = raw_status if raw_status in ("partial", "fallback_success") else BACKEND_SUCCESS
-        return {**result, "status": out_status}
+        return {
+            **result,
+            "status": BACKEND_SUCCESS,
+            "index_mode": raw_status,
+            "completed": raw_status in (BACKEND_SUCCESS, "ok", "fallback_success"),
+        }
     except Exception as e:
         req_id = str(uuid.uuid4())
         log.error("Index code error [%s]: %s", req_id, e, exc_info=True)

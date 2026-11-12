@@ -150,7 +150,18 @@ def test_agentic_search_uses_hit_entity_ids_and_canonical_results(tmp_path):
     engine._put_conn = lambda _connection, error=False: None
     engine.search = lambda *_args, **_kwargs: {
         "status": "success",
-        "results": [{"content": "hit", "metadata": {"entity_id": 7}, "score": 1.0}],
+        "results": [{
+            "chunk_id": 11,
+            "document_id": 12,
+            "content": "hit",
+            "content_hash": "original-hash",
+            "source_uri": "file:///source.py",
+            "file_path": "source.py",
+            "root_id": "root-a",
+            "final_score": 0.95,
+            "metadata": {"entity_id": 7},
+            "score": 1.0,
+        }],
     }
     engine.ram_pages = {}
     engine._ram_lock = threading.RLock()
@@ -161,7 +172,16 @@ def test_agentic_search_uses_hit_entity_ids_and_canonical_results(tmp_path):
     result = engine.agentic_search(context, "unrelated name", max_depth=2)
 
     assert result["status"] == "success"
-    assert result["results"][0]["metadata"]["entity_id"] == 7
+    hit = result["results"][0]
+    assert hit["metadata"]["entity_id"] == 7
+    assert hit["chunk_id"] == 11
+    assert hit["document_id"] == 12
+    assert hit["source_uri"] == "file:///source.py"
+    assert hit["file_path"] == "source.py"
+    assert hit["root_id"] == "root-a"
+    assert hit["final_score"] == 0.95
+    assert hit["content_hash"] == "original-hash"
+    assert hit["content_transform"] == "context_safety_layer"
     assert "vector_hits" not in result
     entity_queries = [query for query, _ in connection.calls if "FROM public.kb_entities" in query]
     assert entity_queries and all("id = ANY(%s)" in query for query in entity_queries)
