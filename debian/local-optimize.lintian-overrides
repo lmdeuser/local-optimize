@@ -1,15 +1,2 @@
-# Third-party wheels are bundled byte-for-byte to preserve their signed payload manifest.
-local-optimize unstripped-binary-or-object [usr/lib/local-optimize/venv/*]
-local-optimize binary-with-bad-dynamic-table [usr/lib/local-optimize/venv/*]
-local-optimize custom-library-search-path [usr/lib/local-optimize/venv/*]
-local-optimize embedded-library [usr/lib/local-optimize/venv/*]
-local-optimize unusual-interpreter [usr/lib/local-optimize/venv/*]
-local-optimize executable-not-elf-or-script [usr/lib/local-optimize/venv/*]
-local-optimize hardening-no-pie [usr/lib/local-optimize/venv/*]
-local-optimize shared-library-lacks-prerequisites [usr/lib/local-optimize/venv/*]
-local-optimize broken-gz [usr/lib/local-optimize/venv/*]
-local-optimize script-not-executable [usr/lib/local-optimize/venv/*]
-local-optimize absolute-symlink-in-top-level-folder [usr/lib/local-optimize/venv/*]
-local-optimize jar-not-in-usr-share [usr/lib/local-optimize/venv/*]
 # The preinst check intentionally supports /usr/local and /usr Ollama installations.
 local-optimize command-with-path-in-maintainer-script /usr/bin/ollama (in test syntax) [preinst:4]

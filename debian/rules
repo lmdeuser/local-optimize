@@ -3,33 +3,12 @@
 %:
 	dh $@
 
-override_dh_auto_configure:
-	python3 packaging/payload_components.py assemble --source-root .
-
 override_dh_auto_test:
 	PYTHONPYCACHEPREFIX=$(CURDIR)/debian/.pycache python3 -m compileall -q .
 	rm -rf $(CURDIR)/debian/.pycache
 
 override_dh_installsystemduser:
 	dh_installsystemduser --no-enable
-
-override_dh_link:
-	@:
-
-override_dh_strip:
-	dh_strip --exclude=usr/lib/local-optimize/venv
-
-override_dh_dwz:
-	dh_dwz --exclude=usr/lib/local-optimize/venv
-
-override_dh_makeshlibs:
-	@:
-
-override_dh_shlibdeps:
-	dh_shlibdeps --exclude=usr/lib/local-optimize/venv
-
-override_dh_strip_nondeterminism:
-	dh_strip_nondeterminism --exclude=usr/lib/local-optimize/venv
 
 override_dh_fixperms:
 	dh_fixperms

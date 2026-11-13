@@ -94,6 +94,7 @@ ALLOWED_ROOT_FILES = {
     "response_format.py",
     "retrieval_policy.json",
     "ruff.toml",
+    "runtime_sync.py",
     "skills_manager.py",
     "source_evidence.py",
     "watchdog_indexer.py",

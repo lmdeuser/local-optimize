@@ -1,5 +1,5 @@
 <package name="local-optimize" project="home:dwolfF:local-optimize">
   <title>Local Optimize</title>
-  <description>Self-contained Ubuntu 26.04/amd64 package with Python 3.14 Intel XPU runtime and pinned RAG/Ollama models. Secrets and agent configuration are managed separately.</description>
+  <description>Ubuntu 26.04/amd64 package for local-optimize that installs application code and provisions the shared Python 3.14 Intel XPU runtime and RAG/Ollama models on target setup. Secrets and agent configuration are managed separately.</description>
   <person userid="dwolfF" role="maintainer"/>
 </package>

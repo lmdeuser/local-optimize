@@ -1,8 +1,10 @@
 {
   "python": "3.14",
   "install_root": "/usr/lib/local-optimize",
+  "system_runtime_root": "/var/lib/local-optimize",
   "models": {
     "multilingual-e5-small": {
+      "role": "embedding",
       "repository": "intfloat/multilingual-e5-small",
       "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
       "required_files": [
@@ -14,6 +16,7 @@
       ]
     },
     "Qwen3-Reranker-0.6B": {
+      "role": "reranker",
       "repository": "Qwen/Qwen3-Reranker-0.6B",
       "revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473",
       "required_files": [

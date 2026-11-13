@@ -1,3 +1,11 @@
+local-optimize (1.0.1-0ubuntu6) resolute; urgency=medium
+
+  * Remove bundled Python venv and HuggingFace/Ollama model weights from the .deb payload.
+  * Provision /var/lib/local-optimize/venv and models on the target machine via local-optimize sync.
+  * Add automatic upstream revision/digest checks with embedding weight safety guard and offline fallback.
+
+ -- Local Optimize contributors <28979718+lmdeuser@users.noreply.github.com>  Fri, 13 Nov 2026 14:35:00 +0500
+
 local-optimize (1.0.1-0ubuntu5) resolute; urgency=medium
 
   * Enforce root_id and owner scoping across provenance, graph, verify, stale_report, and deduplication keys.

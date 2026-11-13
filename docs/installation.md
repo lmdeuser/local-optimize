@@ -1,8 +1,8 @@
 # Установка и настройка
 
-Для Ubuntu 26.04/amd64 рекомендуется готовый DEB из `docs/packaging.md`: он уже содержит Python 3.14/XPU-окружение, E5, Qwen reranker и модель `qwen2.5-coder:7b`. После его установки не выполняйте команды `pip`, создание venv или скачивание моделей из разделов ручной установки. CLI использует `/usr/lib/local-optimize/venv`, а runtime должен находиться на SSD.
+Для Ubuntu 26.04/amd64 рекомендуется готовый DEB из `docs/packaging.md`: при установке он автоматически разворачивает общее Python 3.14/XPU-окружение в `/var/lib/local-optimize/venv`, скачивает E5 и Qwen reranker в `/var/lib/local-optimize/models` и синхронизирует `qwen2.5-coder:7b` в локальной службе Ollama. После его установки не выполняйте команды `pip`, создание venv или ручное скачивание моделей из разделов ниже. CLI использует `/var/lib/local-optimize/venv`, а каталоги `/var/lib/local-optimize` и `/usr/share/ollama` должны находиться на SSD.
 
-Остальное руководство описывает ручной запуск для разработки и настройку, общую для обоих вариантов. Для DEB пропустите шаги создания окружения и скачивания моделей, замените команды `python create_schema.py` на `local-optimize migrate`, а `python gpu_rag_server.py` — на `local-optimize server`. PostgreSQL/pgvector, Intel driver/OpenCL ICD, Ollama binary/service и секреты остаются prerequisites.
+Остальное руководство описывает ручной запуск для разработки и настройку, общую для обоих вариантов. Для DEB пропустите шаги создания окружения и скачивания моделей, замените команды `python create_schema.py` на `local-optimize migrate`, а `python gpu_rag_server.py` — на `local-optimize server`. PostgreSQL/pgvector, Intel driver/OpenCL ICD, запущенная служба Ollama и секреты остаются prerequisites.
 
 ## 1. Ограничения и требования
 

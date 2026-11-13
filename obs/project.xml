@@ -1,6 +1,6 @@
 <project name="home:dwolfF:local-optimize">
   <title>Local Optimize</title>
-  <description>Self-contained local-first MCP/RAG memory for Ubuntu 26.04, with Python Intel XPU runtime and pinned models. Secrets and agent migration remain separate.</description>
+  <description>Local-first MCP/RAG memory for Ubuntu 26.04, with on-target Python Intel XPU runtime provisioning and upstream-verified RAG/Ollama models. Secrets and agent migration remain separate.</description>
   <person userid="dwolfF" role="maintainer"/>
   <repository name="xUbuntu_26.04">
     <path project="Ubuntu:26.04" repository="standard"/>

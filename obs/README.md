@@ -6,7 +6,7 @@ Target project and package:
 - Package: `local-optimize`
 - Build target: `xUbuntu_26.04` on `x86_64`
 
-The package contains compiled Python 3.14/XPU dependencies and pinned models. It is intentionally specific to Ubuntu 26.04/amd64; Ubuntu 24.04 is not a compatible target for this payload.
+The package targets Ubuntu 26.04/amd64 and provisions Python 3.14 Intel XPU dependencies (`/var/lib/local-optimize/venv`), HuggingFace models (`/var/lib/local-optimize/models`), and the Ollama model on the target host during package configuration (`local-optimize sync`). Ubuntu 24.04 is not a compatible target for this runtime.
 
 ## Controlled build policy
 
@@ -20,9 +20,9 @@ It creates the `.dsc`, main orig tar, and Debian tar in a temporary directory, p
 
 OBS is the binary build and package-verification authority. Never run `packaging/build-deb.sh` (including `SOURCE_ONLY=1`), `dpkg-buildpackage`, runtime staging, or `lintian` on locally built packages. Never upload locally generated DEB or runtime component archives. Remove accidental build artifacts, caches, diagnostic directories, and temporary worktrees.
 
-`obs/_service` downloads the published source assets into OBS. Runtime components and their hashes remain pinned in OBS and in `runtime/`. Secrets, agent configuration, Git-ignored notes, and unrelated untracked files must never enter release inputs.
+`obs/_service` downloads the published source assets (`dsc`, `orig.tar.gz`, `debian.tar.xz`) into OBS. Multi-part `orig-runtime-*` weight/venv components are no longer bundled in the `.deb`. Secrets, agent configuration, Git-ignored notes, and unrelated untracked files must never enter release inputs.
 
-Components are limited to 512 MiB before compression. Oversized files are split and reassembled with SHA-256 verification during the OBS build. A release is accepted only when OBS reports `succeeded`; a local `.deb` is never a substitute.
+A release is accepted only when OBS reports `succeeded`; a local `.deb` is never a substitute.
 
 ## Create or update OBS metadata
 

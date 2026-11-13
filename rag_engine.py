@@ -237,7 +237,9 @@ def build_evidence_acl_sql(
 # Russian paraphrase recall, at the same 384 dimensions. Changing this requires
 # a full re-embed (reembed_corpus.py) and a matching MODEL_PROFILES entry.
 # See docs/embedding-model-evaluation.md.
-_DEFAULT_MODEL_DIR = os.path.join(PROJECT_ROOT, "models", "multilingual-e5-small")
+from runtime_sync import resolve_model_dir as _resolve_model_dir
+
+_DEFAULT_MODEL_DIR = str(_resolve_model_dir("multilingual-e5-small", Path(PROJECT_ROOT)))
 MODEL_PATH = os.getenv("MODEL_PATH", _DEFAULT_MODEL_DIR)
 TOKENIZER_PATH = os.getenv("TOKENIZER_PATH", _DEFAULT_MODEL_DIR)
 

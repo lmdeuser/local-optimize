@@ -7,15 +7,29 @@ local-optimize \- run the local-first MCP/RAG engine
 .RI [ arguments ]
 .SH DESCRIPTION
 .B local-optimize
-runs application entry points from /usr/lib/local-optimize using the packaged Python virtual environment.
-It does not create models, secrets, databases or agent configuration.
+runs application entry points from /usr/lib/local-optimize using the shared
+Python virtual environment and system model store provisioned under
+/var/lib/local-optimize.
+It does not create secrets, databases or agent configuration.
 .PP
 The Python interpreter is read from
-.B LOCAL_OPTIMIZE_VENV
-or from /usr/lib/local-optimize/venv.
+.B LOCAL_OPTIMIZE_VENV ,
+$APP_ROOT/venv, or /var/lib/local-optimize/venv.
 .B LOCAL_OPTIMIZE_ROOT
 can override the application directory for packaging checks.
+.B LOCAL_OPTIMIZE_MODELS_DIR
+can override the HuggingFace models directory.
 .SH COMMANDS
+.TP
+.B sync
+Provision /var/lib/local-optimize/venv and synchronize HuggingFace and Ollama models.
+.TP
+.B models
+Inspect or synchronize models (
+.B status
+|
+.B sync
+).
 .TP
 .B migrate
 Apply PostgreSQL migrations. This does not migrate agents.
@@ -43,13 +57,16 @@ Print command help.
 .SH FILES
 .TP
 .I /usr/lib/local-optimize
-Application files.
+Application files and lock/policy metadata.
 .TP
 .I ~/.config/local-optimize/secrets.env
 User-managed secrets; never installed by the package.
 .TP
-.I /usr/lib/local-optimize/venv
-Packaged Python environment.
+.I /var/lib/local-optimize/venv
+Provisioned shared Python 3.14 Intel XPU environment.
+.TP
+.I /var/lib/local-optimize/models
+Provisioned shared HuggingFace models.
 .SH SEE ALSO
 .BR systemctl (1),
 .BR python3 (1)

@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    purge)
+        rm -rf \
+            /var/lib/local-optimize/venv \
+            /var/lib/local-optimize/models \
+            /var/cache/local-optimize
+        rmdir /var/lib/local-optimize 2>/dev/null || true
+        ;;
+esac
+
+#DEBHELPER#
+exit 0

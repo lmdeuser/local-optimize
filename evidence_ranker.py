@@ -11,10 +11,27 @@ import time
 from pathlib import Path
 
 from query_analysis import query_facet
+from runtime_sync import resolve_evidence_model_path
 
 ROOT = Path(__file__).resolve().parent
 POLICY = json.loads((ROOT / "retrieval_policy.json").read_text())
-POLICY_HASH = hashlib.sha256(json.dumps(POLICY, sort_keys=True).encode()).hexdigest()
+
+
+def _active_policy_payload() -> dict:
+    payload = dict(POLICY)
+    try:
+        model_dir = resolve_evidence_model_path(ROOT, POLICY["model_path"])
+        state_file = model_dir / ".model-state.json"
+        if state_file.is_file():
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            if isinstance(state, dict) and state.get("revision"):
+                payload["active_revision"] = state["revision"]
+    except (OSError, ValueError):
+        pass
+    return payload
+
+
+POLICY_HASH = hashlib.sha256(json.dumps(_active_policy_payload(), sort_keys=True).encode()).hexdigest()
 
 
 def select_candidates(hits: list[dict]) -> list[dict]:
@@ -41,9 +58,7 @@ class EvidenceRanker:
 
         if not torch.xpu.is_available():
             raise RuntimeError("Intel XPU is required for evidence ranking")
-        path = (ROOT / POLICY["model_path"]).resolve(strict=True)
-        if not path.is_relative_to(ROOT / "models"):
-            raise ValueError("Evidence model must be a local project model")
+        path = resolve_evidence_model_path(ROOT, POLICY["model_path"])
         tokenizer = AutoTokenizer.from_pretrained(
             path, padding_side="left", local_files_only=True, trust_remote_code=False
         )

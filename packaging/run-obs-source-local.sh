@@ -13,6 +13,6 @@ if gh release view "$tag" >/dev/null 2>&1; then
 else
     gh release create "$tag" "$WORK"/dist/* \
         --title "OBS source ${tag#obs-source-}" \
-        --notes "Debian source assets from the project-local runner. Runtime components remain pinned in OBS."
+        --notes "Debian source assets from the project-local runner. Runtime and models are provisioned on target setup."
 fi
 gh release view "$tag" --json url --jq .url

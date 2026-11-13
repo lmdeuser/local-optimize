@@ -7,13 +7,9 @@ docs usr/share/doc/local-optimize/
 evaluation usr/lib/local-optimize/
 hooks usr/lib/local-optimize/
 migrations usr/lib/local-optimize/
+packaging/runtime-policy.json usr/lib/local-optimize/packaging/
+runtime/requirements.lock usr/lib/local-optimize/
 skills usr/lib/local-optimize/
 packaging/local-optimize usr/bin/
 packaging/systemd/gpu-rag-server.service usr/lib/systemd/user/
 packaging/systemd/watchdog-indexer.service usr/lib/systemd/user/
-runtime/venv usr/lib/local-optimize/
-runtime/models usr/lib/local-optimize/
-runtime/ollama-models/blobs usr/share/ollama/.ollama/models/
-runtime/ollama-models/manifests usr/share/ollama/.ollama/models/
-runtime/manifest.json usr/lib/local-optimize/
-runtime/requirements.lock usr/lib/local-optimize/

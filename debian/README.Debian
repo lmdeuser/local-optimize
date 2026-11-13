@@ -1,17 +1,18 @@
 Local Optimize on Debian/Ubuntu
 ================================
 
-The Ubuntu 26.04/amd64 package installs application code, a relocatable
-Python 3.14 Intel XPU environment, pinned E5/Qwen models and the pinned
-qwen2.5-coder:7b manifest/blobs. Installation does not run pip or download
-models. Runtime files are installed on the root filesystem under
-/usr/lib/local-optimize and /usr/share/ollama; use an SSD for that filesystem.
+The Ubuntu 26.04/amd64 package installs application code, dependency lock
+metadata and model policy under /usr/lib/local-optimize. During package
+configuration (postinst), "local-optimize sync" provisions a shared
+Python 3.14 Intel XPU environment in /var/lib/local-optimize/venv, downloads
+or updates the HuggingFace E5/Qwen models in /var/lib/local-optimize/models,
+and verifies/pulls qwen2.5-coder:7b in the local Ollama service.
+Use an SSD for /var/lib/local-optimize and /usr/share/ollama.
 
 Prerequisites are an Intel GPU driver/OpenCL ICD, PostgreSQL 18 with pgvector,
-and an installed Ollama binary/service with the ollama system user and the
-standard /usr/share/ollama/.ollama/models store. PostgreSQL and pgvector are
-package dependencies. Ollama is checked by preinst because this host installs
-it outside dpkg.
+and an installed, running Ollama binary/service with the ollama system user.
+PostgreSQL, pgvector and python3-venv are package dependencies. Ollama is
+checked by preinst because this host installs it outside dpkg.
 
 Configure ~/.config/local-optimize/secrets.env and projects.json as described
 in /usr/share/doc/local-optimize/docs/installation.md. Package installation
@@ -20,14 +21,17 @@ out of the repository.
 
 Commands:
 
+  sudo local-optimize sync      Provision/update venv and models
+  local-optimize models status  Check local vs upstream/policy model state
   local-optimize migrate        Apply PostgreSQL migrations
   local-optimize server         Run the FastAPI server
   local-optimize watchdog       Run filesystem indexing
   local-optimize mcp            Run the full local-only MCP server
-  local-optimize lmstudio-mcp   Run the read-only LM Studio wrapper
+  local-optimize lmstudio-mcp   Run the read-only LM Studio MCP wrapper
   local-optimize index          Index the registered project
 
-LOCAL_OPTIMIZE_VENV can override /usr/lib/local-optimize/venv for development.
+LOCAL_OPTIMIZE_VENV can override /var/lib/local-optimize/venv for development.
+LOCAL_OPTIMIZE_MODELS_DIR can override /var/lib/local-optimize/models.
 LOCAL_OPTIMIZE_ROOT can override /usr/lib/local-optimize for packaging checks.
 
 The user units are installed but not globally enabled. After configuration,

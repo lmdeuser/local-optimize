@@ -1,10 +1,8 @@
 {
-  "format": 1,
+  "format": 2,
+  "mode": "on-target-sync",
   "payload_sha256": {
-    "models": "27d326e8514f7de732d67e74ac2f8c596024d95127aeb35f00095a2b07cd998a",
-    "ollama-models": "748cdd1aa925a4a859e7ec1ca85cff623ed88150e059e32bf085718355b2b441",
-    "requirements.lock": "fee0b92acdb6ef55ef81616e537a4825897441a450612dd4e2e00cf02b653af0",
-    "venv": "dad937d1f31c2d6fc0a65718999791c74cfbeddf9292f00ffbc3cbb61d4453bb"
+    "requirements.lock": "fee0b92acdb6ef55ef81616e537a4825897441a450612dd4e2e00cf02b653af0"
   },
   "policy": {
     "install_root": "/usr/lib/local-optimize",
@@ -17,7 +15,8 @@
           "tokenizer.json",
           "tokenizer_config.json"
         ],
-        "revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473"
+        "revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473",
+        "role": "reranker"
       },
       "multilingual-e5-small": {
         "repository": "intfloat/multilingual-e5-small",
@@ -28,7 +27,8 @@
           "sentencepiece.bpe.model",
           "tokenizer.json"
         ],
-        "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3"
+        "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+        "role": "embedding"
       }
     },
     "ollama": {
@@ -37,6 +37,7 @@
       "repository": "library/qwen2.5-coder",
       "tag": "7b"
     },
-    "python": "3.14"
+    "python": "3.14",
+    "system_runtime_root": "/var/lib/local-optimize"
   }
 }
