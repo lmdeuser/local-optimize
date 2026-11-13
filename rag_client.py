@@ -13,12 +13,13 @@ from config import settings
 from local_inference import correlation_id
 from project_context import (
     GlobalKnowledgeContext,
+    GlobalWriteContext,
     KnowledgeContext,
     ProjectContext,
     WorkingDirectoryContext,
 )
 
-RequestContext = ProjectContext | KnowledgeContext | WorkingDirectoryContext | GlobalKnowledgeContext
+RequestContext = ProjectContext | KnowledgeContext | WorkingDirectoryContext | GlobalKnowledgeContext | GlobalWriteContext
 
 log = logging.getLogger("rag_client")
 
@@ -36,7 +37,7 @@ class RagClient:
         model_name: str = "",
         server_url: str = "",
     ) -> None:
-        if not isinstance(context, (ProjectContext, KnowledgeContext, WorkingDirectoryContext, GlobalKnowledgeContext)):
+        if not isinstance(context, (ProjectContext, KnowledgeContext, WorkingDirectoryContext, GlobalKnowledgeContext, GlobalWriteContext)):
             raise TypeError("RagClient requires a validated ProjectContext or search context")
         self.context = context
         self.model_name = model_name
@@ -63,9 +64,12 @@ class RagClient:
         context: RequestContext | None = None,
         *,
         allow_knowledge_context: bool = False,
+        allow_global_write: bool = False,
     ) -> dict[str, Any]:
         current = context or self.context
         if isinstance(current, (KnowledgeContext, GlobalKnowledgeContext)) and not allow_knowledge_context:
+            raise TypeError("This operation requires a filesystem-capable context")
+        if isinstance(current, GlobalWriteContext) and not allow_global_write:
             raise TypeError("This operation requires a filesystem-capable context")
         return {"context": current.to_request_dict()}
 
@@ -198,7 +202,7 @@ class RagClient:
         end_locator: str = "",
     ) -> dict:
         content = self._require_text("content", content, settings.max_save_chars, minimum=10)
-        payload = self._base_payload(context)
+        payload = self._base_payload(context, allow_global_write=True)
         payload.update(
             {
                 "content": content,
@@ -255,7 +259,7 @@ class RagClient:
         superseded_by: int | None = None,
     ) -> dict:
         current = context or self.context
-        payload = self._base_payload(current)
+        payload = self._base_payload(current, allow_global_write=True)
         payload.update(
             {
                 "chunk_id": chunk_id,
@@ -277,7 +281,7 @@ class RagClient:
         note: str = "",
     ) -> dict:
         current = context or self.context
-        payload = self._base_payload(current)
+        payload = self._base_payload(current, allow_global_write=True)
         payload.update(
             {
                 "chunk_id": chunk_id,

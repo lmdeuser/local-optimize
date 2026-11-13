@@ -1,3 +1,11 @@
+local-optimize (1.0.1-0ubuntu7) resolute; urgency=medium
+
+  * Support unregistered working directories and ACL-scoped global knowledge.
+  * Limit watchdog subscriptions and reconcile large trees in bounded passes.
+  * Preserve source ownership, session isolation, and existing project aliases.
+
+ -- Local Optimize contributors <28979718+lmdeuser@users.noreply.github.com>  Fri, 13 Nov 2026 19:00:00 +0500
+
 local-optimize (1.0.1-0ubuntu6) resolute; urgency=medium
 
   * Remove bundled Python venv and HuggingFace/Ollama model weights from the .deb payload.

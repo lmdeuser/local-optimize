@@ -37,8 +37,9 @@ from psycopg2 import sql as pgsql
 import numpy as np
 from transformers import AutoTokenizer
 from config import build_dedup_scope, settings
+from indexer_queue import CODE_EXTENSIONS, DOCUMENT_EXTENSIONS, IGNORED_DIRS
 from local_inference import correlation_id
-from project_context import KnowledgeContext, ProjectContext, ReadScope, build_default_project_context
+from project_context import GlobalWriteContext, KnowledgeContext, ProjectContext, ReadScope, build_default_project_context, workspace_definition
 from query_cache import BoundedTTLCache as _BoundedTTLCache
 from query_cache import PersistentAnswerCache as _PersistentAnswerCache
 from query_cache import PersistentQueryCache as _PersistentQueryCache
@@ -243,8 +244,6 @@ _DEFAULT_MODEL_DIR = str(_resolve_model_dir("multilingual-e5-small", Path(PROJEC
 MODEL_PATH = os.getenv("MODEL_PATH", _DEFAULT_MODEL_DIR)
 TOKENIZER_PATH = os.getenv("TOKENIZER_PATH", _DEFAULT_MODEL_DIR)
 
-DOCUMENT_EXTENSIONS = frozenset({".md", ".txt", ".jsonl", ".json", ".yaml", ".yml", ".sql", ".sh"})
-CODE_EXTENSIONS = frozenset({".py"})
 INDEX_DIRECTORY_MAX_FILES = 500
 INDEX_DIRECTORY_MAX_BYTES = 100 * 1024 * 1024
 INDEX_DIRECTORY_MAX_DEPTH = 8
@@ -2174,8 +2173,7 @@ class RagEngine:
     @staticmethod
     def _validate_owned_path(context: ProjectContext, file_path: str | Path) -> Path:
         path = context.validate_path(file_path, must_exist=True)
-        owner = get_project_registry(settings).owner_for_path(path, must_exist=True)
-        if (owner.project_id, owner.root_id) != (context.project_id, context.root_id):
+        if not get_project_registry(settings).owns_context_path(context, path, must_exist=True):
             raise ValueError("Path belongs to a more specific registered root")
         return path
 
@@ -2407,6 +2405,7 @@ class RagEngine:
             started_at = time.monotonic()
             stop_reason = ""
             root_path = Path(file_path)
+            registry = get_project_registry(settings)
             for root, dirs, files in os.walk(file_path):
                 elapsed = time.monotonic() - started_at
                 depth = len(Path(root).relative_to(root_path).parts)
@@ -2418,15 +2417,9 @@ class RagEngine:
                 # Фильтруем директории in-place (чтобы os.walk не заходил в них)
                 dirs[:] = [
                     d for d in dirs
-                    if not (
-                        (d.startswith('.') and d != '.system_generated')
-                        or d in {
-                            'venv', 'rag-venv', '__pycache__', 'node_modules',
-                            'artifacts', 'evaluation', 'backup', 'backups', 'models',
-                            'refactored-agent-skills', 'dist', 'build', 'brain', 'logs',
-                        }
-                    )
+                    if not d.startswith('.') and d not in IGNORED_DIRS
                     and not (Path(root) / d).is_symlink()
+                    and registry.owns_context_path(context, Path(root) / d)
                 ]
                 for name in sorted(files):
                     candidate = Path(root) / name
@@ -3358,8 +3351,14 @@ class RagEngine:
         at generation 22 with 16 of 16 rows stranded below it after three hours
         of ordinary editing.
         """
-        if not isinstance(context, ProjectContext):
+        if not isinstance(context, (ProjectContext, GlobalWriteContext)):
             raise TypeError("save requires ProjectContext")
+        if isinstance(context, GlobalWriteContext) and (
+            file_path or document_id is not None or Path(source_uri).is_absolute()
+            or source_uri.startswith("file:")
+            or any(key in (metadata or {}) for key in ("file", "relative_path", "source_snapshot"))
+        ):
+            raise ValueError("Global knowledge cannot refer to a filesystem source")
         conn = self._get_conn()
         error = False
         try:
@@ -3520,7 +3519,7 @@ class RagEngine:
         prevent. Re-retiring an already-retired fact matches and refreshes it,
         which is how a correction's reason or `superseded_by` gets amended.
         """
-        if not isinstance(context, ProjectContext):
+        if not isinstance(context, (ProjectContext, GlobalWriteContext)):
             raise TypeError("deprecate requires ProjectContext")
         if status not in self.CORRECTION_STATUSES:
             return {
@@ -3617,7 +3616,7 @@ class RagEngine:
         Returns how many rows were matched. As with `deprecate`, `updated: 0`
         means the store is unchanged.
         """
-        if not isinstance(context, ProjectContext):
+        if not isinstance(context, (ProjectContext, GlobalWriteContext)):
             raise TypeError("verify requires ProjectContext")
         if chunk_id is None and not content_hash:
             return {"status": "error", "message": "verify requires chunk_id or content_hash"}
@@ -3844,6 +3843,28 @@ class RagEngine:
             POLICY_HASH,
         )
 
+    def list_readable_projects(self, context) -> list[tuple[str, str]]:
+        """Enumerate only projects containing knowledge visible to this caller."""
+        scope, params = build_read_scope_sql(
+            context.read_scope.value, context.agent_id, context.session_id
+        )
+        conn = self._get_conn()
+        error = False
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT project_id, MIN(COALESCE(NULLIF(project_name, ''), project_id)) "
+                    "FROM public.project_knowledge WHERE project_id IS NOT NULL "
+                    "AND project_id <> '' AND " + scope + " GROUP BY project_id ORDER BY project_id",
+                    params,
+                )
+                return [(str(project_id), str(name)) for project_id, name in cur.fetchall()]
+        except Exception:
+            error = True
+            raise
+        finally:
+            self._put_conn(conn, error=error)
+
     def search(
         self,
         context: ProjectContext | KnowledgeContext,
@@ -3891,11 +3912,12 @@ class RagEngine:
         return self._check_source_versions_with_provenance(context.project_id, result)
 
     @staticmethod
-    def _check_source_versions(project_id: str, result: dict) -> dict:
+    def _check_source_versions(project_id: str, result: dict, trusted_roots: dict | None = None) -> dict:
         if result.get("status") != "success":
             return result
         registry = get_project_registry(settings)
         eligible = []
+        workspace_roots = set()
         ownership_rejected = 0
         for hit in result.get("results", []):
             item = dict(hit)
@@ -3906,7 +3928,26 @@ class RagEngine:
                 try:
                     owner = registry.owner_for_path(source_path)
                 except (OSError, ValueError):
-                    ownership_rejected += 1
+                    relative = Path(str(item.get("file_path") or ""))
+                    try:
+                        if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+                            raise ValueError("Invalid workspace source path")
+                        candidate = source_path
+                        for _ in relative.parts:
+                            candidate = candidate.parent
+                        if candidate / relative != source_path:
+                            raise ValueError("Workspace source mismatch")
+                        workspace = workspace_definition(candidate)
+                        stored_root = str(item.get("root_id") or "")
+                        derived_match = (workspace.project_id, "workspace") == (item["project_id"], stored_root)
+                        stored_match = (trusted_roots or {}).get(item.get("chunk_id")) == (stored_root, str(candidate))
+                        if not derived_match and not stored_match:
+                            raise ValueError("Workspace source identity mismatch")
+                    except (OSError, ValueError):
+                        ownership_rejected += 1
+                        continue
+                    workspace_roots.add(candidate)
+                    eligible.append(item)
                     continue
                 stored_root = str(item.get("root_id") or "")
                 if owner.project_id != item["project_id"] or (
@@ -3922,6 +3963,7 @@ class RagEngine:
             ) else ()
         except ValueError:
             roots = ()
+        roots = tuple(roots) + tuple(workspace_roots)
         accepted, rejected = prepare_evidence(eligible, roots)
         rejected += ownership_rejected
         result = dict(result, results=accepted)
@@ -3935,7 +3977,30 @@ class RagEngine:
         return result
 
     def _check_source_versions_with_provenance(self, project_id: str, result: dict) -> dict:
-        initial = self._check_source_versions(project_id, result)
+        trusted_roots = {}
+        registry = get_project_registry(settings)
+        if project_id not in registry.project_ids and not project_id.startswith("ws:"):
+            ids = [hit.get("chunk_id") for hit in result.get("results", [])
+                   if hit.get("chunk_id") is not None and Path(str(hit.get("source_uri") or "")).is_absolute()]
+            get_conn = getattr(self, "_get_conn", None)
+            if ids and get_conn is not None:
+                try:
+                    conn = get_conn()
+                except Exception:
+                    conn = None
+                if conn is None:
+                    return self._check_source_versions(project_id, result)
+                error = False
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT id, root_id, project_root FROM public.project_knowledge "
+                                    "WHERE project_id = %s AND id = ANY(%s)", (project_id, ids))
+                        trusted_roots = {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+                except Exception:
+                    error = True
+                finally:
+                    self._put_conn(conn, error=error)
+        initial = self._check_source_versions(project_id, result, trusted_roots)
         omitted = int(initial.get("unusable_sources_omitted") or 0)
         if initial.get("status") != "success" or omitted == 0:
             return initial
@@ -3991,6 +4056,7 @@ class RagEngine:
         recovered = self._check_source_versions(
             project_id,
             dict(result, results=candidates, unusable_sources_omitted=0),
+            trusted_roots,
         )
         recovered_hits = list(recovered.get("results", []))
         accepted.extend(recovered_hits)

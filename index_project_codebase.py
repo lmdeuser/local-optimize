@@ -9,15 +9,9 @@ import sys
 from pathlib import Path
 
 from config import settings
+from indexer_queue import IGNORED_DIRS
 from project_context import build_default_project_context, get_project_registry
 from rag_engine import CODE_EXTENSIONS, DOCUMENT_EXTENSIONS, RagEngine
-
-IGNORED_DIRS = frozenset({
-    "__pycache__", ".git", "venv", ".venv", "rag-venv", "node_modules", ".mimocode",
-    "artifacts", "evaluation", "backup", "backups", "models", "refactored-agent-skills",
-    ".pytest_cache", ".mypy_cache", ".ruff_cache", "dist", "build", "brain", "logs",
-    ".agents", ".claude", ".cursor", ".vscode",
-})
 
 
 def _index_root(project_id: str = "", root_id: str = "", working_directory: str = "") -> tuple[int, int]:
@@ -36,26 +30,10 @@ def _index_root(project_id: str = "", root_id: str = "", working_directory: str 
         validation_status="unverified",
     )
     root = Path(context.project_root)
-    context_project_id = getattr(context, "project_id", None)
-    context_root_id = getattr(context, "root_id", None)
-    registry = (
-        get_project_registry(settings)
-        if context_project_id and context_root_id
-        else None
-    )
-    if registry is not None and not registry.is_owned_by(
-        root, project_id=context_project_id, root_id=context_root_id
-    ):
-        registry = None
+    registry = get_project_registry(settings)
 
     def _is_owned(candidate: Path) -> bool:
-        if registry is None:
-            return True
-        return registry.is_owned_by(
-            candidate,
-            project_id=context_project_id,
-            root_id=context_root_id,
-        )
+        return registry.owns_context_path(context, candidate)
 
     engine = RagEngine()
     indexed = 0

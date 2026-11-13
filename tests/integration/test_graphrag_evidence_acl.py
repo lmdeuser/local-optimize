@@ -236,3 +236,76 @@ def test_feedback_does_not_weaken_another_owners_private_relation(clean_db, rag)
         assert independent is not None and independent != relation
         cur.execute('SELECT count(*) FROM public.relation_evidence WHERE relation_id = %s AND agent_id = %s', (relation, 'other'))
         assert cur.fetchone()[0] == 0
+
+
+def test_rootless_writes_and_project_enumeration_enforce_session_acl(clean_db, rag):
+    import numpy as np
+    from project_context import GlobalKnowledgeContext, GlobalWriteContext
+
+    rag.encode = lambda *_args, **_kwargs: np.zeros(384, dtype=np.float32)
+    owner = GlobalWriteContext("session-private", "session", "owner", "session-a")
+    other = GlobalWriteContext("session-private", "session", "owner", "session-b")
+    result = rag.save(owner, "Private fixture content that remains session scoped")
+    assert result["status"] == "success"
+    read_owner = GlobalKnowledgeContext("session", "owner", "session-a")
+    read_other = GlobalKnowledgeContext("session", "owner", "session-b")
+    assert any(project == owner.project_id for project, _ in rag.list_readable_projects(read_owner))
+    assert not rag.list_readable_projects(read_other)
+    assert rag.deprecate(other, chunk_id=result["chunk_id"])["updated"] == 0
+    assert rag.verify(other, chunk_id=result["chunk_id"])["updated"] == 0
+    assert rag.verify(owner, chunk_id=result["chunk_id"])["updated"] == 1
+    with pytest.raises(ValueError, match="filesystem"):
+        rag.save(owner, "Attempt to attach a file to rootless knowledge", file_path="a.py")
+
+
+def test_ad_hoc_indexing_persists_source_and_checks_freshness(clean_db, rag, tmp_path, monkeypatch):
+    import numpy as np
+    import rag_engine
+    from project_context import GlobalKnowledgeContext, ProjectRegistry
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    source = root / "note.md"
+    source.write_text("A workspace document with enough content to be indexed. " * 3)
+    registry = ProjectRegistry([])
+    monkeypatch.setattr(rag_engine, "get_project_registry", lambda _: registry)
+    context = registry.resolve(working_directory=str(root), write_visibility="session-private",
+                               read_scope="session", agent_id="agent", session_id="session")
+    rag.encode = lambda *_args, **_kwargs: np.zeros(384, dtype=np.float32)
+    rag._chunk_text = lambda text, **_kwargs: [text]
+    assert rag.index_document(context, str(source))["status"] == "success"
+    with clean_db.cursor() as cur:
+        cur.execute("SELECT id, project_id, root_id, file_path, source_uri, metadata FROM public.project_knowledge")
+        row = cur.fetchone()
+    hit = dict(zip(("chunk_id", "project_id", "root_id", "file_path", "source_uri", "metadata"), row))
+    hit["final_score"] = 0.8
+    checked = rag._check_source_versions(context.project_id, {"status": "success", "results": [hit]})
+    assert checked["results"][0]["source_state"] == "current"
+    assert rag.list_readable_projects(GlobalKnowledgeContext("session", "agent", "session"))[0][0] == context.project_id
+    assert not rag.list_readable_projects(GlobalKnowledgeContext("session", "agent", "other"))
+
+
+def test_unregistered_legacy_source_uses_its_stored_root(clean_db, rag, tmp_path, monkeypatch):
+    import numpy as np
+    import rag_engine
+    from project_context import ProjectDefinition, ProjectRegistry
+
+    root = tmp_path / "legacy"
+    root.mkdir()
+    source = root / "note.md"
+    source.write_text("A legacy document with enough content to be indexed. " * 3)
+    registry = ProjectRegistry([ProjectDefinition("legacy", "Legacy", {"primary": root})])
+    monkeypatch.setattr(rag_engine, "get_project_registry", lambda _: registry)
+    context = registry.resolve(project_id="legacy", root_id="primary", write_visibility="shared",
+                               read_scope="shared", agent_id="agent", session_id="session")
+    rag.encode = lambda *_args, **_kwargs: np.zeros(384, dtype=np.float32)
+    rag._chunk_text = lambda text, **_kwargs: [text]
+    assert rag.index_document(context, str(source))["status"] == "success"
+    with clean_db.cursor() as cur:
+        cur.execute("SELECT id, project_id, root_id, file_path, source_uri, metadata FROM public.project_knowledge")
+        row = cur.fetchone()
+    hit = dict(zip(("chunk_id", "project_id", "root_id", "file_path", "source_uri", "metadata"), row))
+    hit["final_score"] = 0.8
+    registry = ProjectRegistry([])
+    checked = rag._check_source_versions_with_provenance("legacy", {"status": "success", "results": [hit]})
+    assert checked["results"][0]["source_state"] == "current"

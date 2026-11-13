@@ -55,6 +55,7 @@ from response_format import (
 )
 from project_context import (
     GlobalKnowledgeContext,
+    GlobalWriteContext,
     WorkingDirectoryContext,
     get_project_registry,
 )
@@ -193,7 +194,16 @@ async def build_client_project_context(
     validation_status: str = "unverified",
     min_score: float = 0.0,
     include_metadata: bool = True,
+    allow_rootless: bool = False,
 ):
+    if allow_rootless and not (project_id or root_id or working_directory):
+        return GlobalWriteContext(
+            write_visibility=write_visibility, read_scope=read_scope,
+            agent_id=agent_id, session_id=session_id,
+            source_types=tuple(source_types or ()), language=language,
+            validation_status=validation_status, min_score=min_score,
+            include_metadata=include_metadata,
+        )
     if project_id or root_id:
         if working_directory or not project_id or not root_id:
             raise ClientContextError("INVALID_CONTEXT", "Explicit project_id and root_id must be provided together.")
@@ -244,7 +254,7 @@ async def build_client_knowledge_context(
     min_score: float = 0.0,
     include_metadata: bool = True,
 ):
-    if global_search:
+    if global_search or not (project_id or root_id or working_directory):
         if project_id or root_id or working_directory:
             raise ClientContextError("INVALID_CONTEXT", "global_search cannot be combined with project/root/cwd.")
         return GlobalKnowledgeContext(
@@ -638,6 +648,7 @@ async def rag_save(
             agent_id=MCP_AGENT_ID,
             session_id=MCP_SESSION_ID,
             validation_status=validation_status,
+            allow_rootless=True,
         )
         client = RagClient(context)
         res = await asyncio.to_thread(
@@ -707,6 +718,7 @@ async def rag_deprecate(
             read_scope=read_scope,
             agent_id=MCP_AGENT_ID,
             session_id=MCP_SESSION_ID,
+            allow_rootless=True,
         )
         client = RagClient(context)
         res = await asyncio.to_thread(
@@ -765,6 +777,7 @@ async def rag_verify(
             project_id=project_id, root_id=root_id, working_directory=working_directory,
             write_visibility="shared", read_scope=read_scope,
             agent_id=MCP_AGENT_ID, session_id=MCP_SESSION_ID,
+            allow_rootless=True,
         )
         client = RagClient(context)
         res = await asyncio.to_thread(

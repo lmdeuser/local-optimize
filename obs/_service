@@ -1,14 +1,14 @@
 <services>
   <service name="download_url" mode="serveronly">
-    <param name="url">https://github.com/lmdeuser/local-optimize/releases/download/obs-source-1.0.1-0ubuntu6/local-optimize_1.0.1-0ubuntu6.dsc</param>
-    <param name="filename">local-optimize_1.0.1-0ubuntu6.dsc</param>
+    <param name="url">https://github.com/lmdeuser/local-optimize/releases/download/obs-source-1.0.1-0ubuntu7/local-optimize_1.0.1-0ubuntu7.dsc</param>
+    <param name="filename">local-optimize_1.0.1-0ubuntu7.dsc</param>
   </service>
   <service name="download_url" mode="serveronly">
-    <param name="url">https://github.com/lmdeuser/local-optimize/releases/download/obs-source-1.0.1-0ubuntu6/local-optimize_1.0.1.orig.tar.gz</param>
+    <param name="url">https://github.com/lmdeuser/local-optimize/releases/download/obs-source-1.0.1-0ubuntu7/local-optimize_1.0.1.orig.tar.gz</param>
     <param name="filename">local-optimize_1.0.1.orig.tar.gz</param>
   </service>
   <service name="download_url" mode="serveronly">
-    <param name="url">https://github.com/lmdeuser/local-optimize/releases/download/obs-source-1.0.1-0ubuntu6/local-optimize_1.0.1-0ubuntu6.debian.tar.xz</param>
-    <param name="filename">local-optimize_1.0.1-0ubuntu6.debian.tar.xz</param>
+    <param name="url">https://github.com/lmdeuser/local-optimize/releases/download/obs-source-1.0.1-0ubuntu7/local-optimize_1.0.1-0ubuntu7.debian.tar.xz</param>
+    <param name="filename">local-optimize_1.0.1-0ubuntu7.debian.tar.xz</param>
   </service>
 </services>

@@ -80,3 +80,44 @@ def test_evaluation_questions_are_not_their_own_evidence(tmp_path):
     hit = {"content": "benchmark question with no answer", "source_type": "document",
            "source_uri": str(tmp_path / "evaluation" / "cases.json")}
     assert prepare_evidence([hit], (tmp_path,)) == ([], 1)
+
+
+def test_ad_hoc_source_requires_matching_workspace_and_current_snapshot(tmp_path, monkeypatch):
+    import rag_engine
+    from project_context import ProjectRegistry
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    source = root / "source.py"
+    source.write_text("fixture content")
+    registry = ProjectRegistry([])
+    monkeypatch.setattr(rag_engine, "get_project_registry", lambda _: registry)
+    context = registry.resolve(working_directory=str(root), write_visibility="shared",
+                               read_scope="shared", agent_id="agent", session_id="session")
+    hit = dict(hit_for(source), file_path="source.py", project_id=context.project_id,
+               root_id=context.root_id, final_score=0.8)
+    checked = rag_engine.RagEngine._check_source_versions(context.project_id, {"status": "success", "results": [hit]})
+    assert checked["results"][0]["source_state"] == "current"
+    forged = dict(hit, file_path="../source.py")
+    checked = rag_engine.RagEngine._check_source_versions(context.project_id, {"status": "success", "results": [forged]})
+    assert not checked["results"]
+    source.write_text("changed content")
+    checked = rag_engine.RagEngine._check_source_versions(context.project_id, {"status": "success", "results": [hit]})
+    assert not checked["results"]
+
+
+def test_ad_hoc_indexing_rejects_nested_registered_root(tmp_path, monkeypatch):
+    import rag_engine
+    from project_context import ProjectDefinition, ProjectRegistry
+
+    root = tmp_path / "workspace"
+    child = root / "child"
+    child.mkdir(parents=True)
+    source = child / "source.py"
+    source.write_text("fixture")
+    registry = ProjectRegistry([ProjectDefinition("child", "Child", {"primary": child})])
+    monkeypatch.setattr(rag_engine, "get_project_registry", lambda _: registry)
+    context = registry.resolve(working_directory=str(root), write_visibility="shared",
+                               read_scope="shared", agent_id="agent", session_id="session")
+    with pytest.raises(ValueError):
+        rag_engine.RagEngine._validate_owned_path(context, source)

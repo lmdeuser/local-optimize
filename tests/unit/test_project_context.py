@@ -150,6 +150,55 @@ def test_validate_path_rejects_symlink_escape(tmp_path):
         context.validate_path(root / "link" / "new.py")
 
 
+def test_unregistered_workspace_is_stable_and_registered_root_keeps_identity(tmp_path):
+    root = tmp_path / "workspace"
+    root.mkdir()
+    kwargs = dict(write_visibility="shared", read_scope="shared", agent_id="agent", session_id="session")
+    empty = ProjectRegistry([])
+    first = empty.resolve(working_directory=str(root), **kwargs)
+    second = empty.resolve(working_directory=str(root), **kwargs)
+    assert first.project_id.startswith("ws:")
+    assert first.project_id == second.project_id
+    assert first.ad_hoc and first.to_request_dict()["working_directory"] == str(root)
+    knowledge = empty.resolve_knowledge(working_directory=str(root), read_scope="shared", agent_id="agent", session_id="session")
+    assert knowledge.project_id == first.project_id
+    registered = ProjectRegistry([ProjectDefinition("legacy", "Legacy", {"primary": root})])
+    assert registered.resolve(working_directory=str(root), **kwargs).project_id == "legacy"
+
+
+@pytest.mark.parametrize("path", ["/", "/etc", "/proc", "/sys", "/root"])
+def test_ad_hoc_workspace_rejects_system_paths(path):
+    from project_context import workspace_definition
+    with pytest.raises(ValueError):
+        workspace_definition(path)
+
+
+def test_ad_hoc_workspace_rejects_symlinks(tmp_path):
+    from project_context import workspace_definition
+    root = tmp_path / "root"
+    root.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(root, target_is_directory=True)
+    with pytest.raises(ValueError, match="symbolic"):
+        workspace_definition(link)
+
+
+def test_rootless_write_context_cannot_be_used_for_indexing():
+    from fastapi import HTTPException
+    from gpu_rag_server import ProjectContextRequest
+    from project_context import GlobalWriteContext
+
+    request = ProjectContextRequest(global_write=True)
+    context = request.to_context(agent_id="agent", session_id="session", allow_rootless=True)
+    assert isinstance(context, GlobalWriteContext)
+    client = RagClient(context, server_url="http://fixture.invalid")
+    with pytest.raises(TypeError, match="filesystem"):
+        client.index_code("/etc/passwd")
+    with pytest.raises(HTTPException) as error:
+        request.to_context(agent_id="agent", session_id="session")
+    assert error.value.status_code == 422
+
+
 def test_unknown_project_id_fails_loudly_rather_than_returning_nothing():
     """The `project_id` trap has to be loud, since it cannot be made safe.
 

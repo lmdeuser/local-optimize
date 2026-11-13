@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from threading import Lock
@@ -47,7 +47,7 @@ def _canonical_root(value: str | Path, field_name: str) -> Path:
     raw = Path(raw_text).expanduser()
     try:
         resolved = raw.resolve(strict=True)
-    except (FileNotFoundError, RuntimeError) as exc:
+    except (OSError, RuntimeError) as exc:
         raise ValueError(f"{field_name} must be an existing directory") from exc
     if not resolved.is_dir():
         raise ValueError(f"{field_name} must be an existing directory")
@@ -71,7 +71,7 @@ def _canonical_path(value: str | Path, field_name: str, *, must_exist: bool = Fa
         if not parent.is_dir():
             raise ValueError("Path parent must be an existing directory")
         return parent.joinpath(*candidate.parts[len(parent.parts):])
-    except (FileNotFoundError, RuntimeError) as exc:
+    except (OSError, RuntimeError) as exc:
         raise ValueError("Path or its parent does not exist") from exc
 
 
@@ -81,6 +81,21 @@ def _is_within(candidate: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def workspace_definition(value: str | Path) -> "ProjectDefinition":
+    """Derive a stable workspace identity without granting system directories."""
+    raw = Path(value).expanduser()
+    if not raw.is_absolute() or ".." in raw.parts:
+        raise ValueError("Workspace must be an absolute path without traversal")
+    root = _canonical_root(raw, "working_directory")
+    if raw != root:
+        raise ValueError("Workspace path must not contain symbolic links")
+    forbidden = tuple(Path(path) for path in ("/etc", "/proc", "/sys", "/root", "/dev", "/boot", "/usr", "/var", "/run"))
+    if root == Path("/") or any(_is_within(root, path) for path in forbidden):
+        raise ValueError("System directories cannot be workspace roots")
+    digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()
+    return ProjectDefinition("ws:" + digest, root.name or "workspace", {"workspace": root})
 
 
 def _fingerprint(payload: dict[str, Any]) -> str:
@@ -231,6 +246,9 @@ class ProjectRegistry:
             roots = entry.get("roots", {})
             if not isinstance(roots, dict):
                 raise ValueError("Projects registry entry has an invalid structure")
+            project_id = str(entry.get("project_id", ""))
+            if project_id == "__global_knowledge__" or project_id.startswith("ws:"):
+                raise ValueError("Projects registry uses a reserved project identifier")
             projects.append(ProjectDefinition(
                 entry.get("project_id", ""), entry.get("project_name", ""), roots,
             ))
@@ -270,6 +288,20 @@ class ProjectRegistry:
             return False
         return (owner.project_id, owner.root_id) == (project_id, root_id)
 
+    def owns_context_path(self, context: "ProjectContext", value: str | Path, *, must_exist: bool = False) -> bool:
+        try:
+            path = context.validate_path(value, must_exist=must_exist)
+            try:
+                owner = self.owner_for_path(path, must_exist=must_exist)
+            except ValueError as exc:
+                if str(exc) != "Path is outside all registered roots" or not context.ad_hoc:
+                    return False
+                workspace = workspace_definition(context.project_root)
+                return (workspace.project_id, "workspace") == (context.project_id, context.root_id)
+            return (owner.project_id, owner.root_id) == (context.project_id, context.root_id)
+        except (OSError, RuntimeError, ValueError):
+            return False
+
     def _validate_fingerprint(
         self,
         actual: str,
@@ -306,7 +338,27 @@ class ProjectRegistry:
         if working_directory is not None:
             if project_id or root_id:
                 raise ValueError("working_directory cannot be combined with project_id/root_id")
-            owner = self.owner_for_path(_canonical_root(working_directory, "working_directory"))
+            requested = workspace_definition(working_directory).roots["workspace"]
+            try:
+                owner = self.owner_for_path(requested)
+            except ValueError as exc:
+                if str(exc) != "Path is outside all registered roots":
+                    raise
+                workspace = workspace_definition(working_directory)
+                if workspace.project_id in self._projects:
+                    raise ValueError("Workspace identity conflicts with registered project")
+                temporary = ProjectRegistry([*self.projects, workspace])
+                resolved = temporary.resolve(
+                    project_id=workspace.project_id, root_id="workspace",
+                    write_visibility=write_visibility, read_scope=read_scope,
+                    agent_id=agent_id, session_id=session_id, source_types=source_types,
+                    language=language, validation_status=validation_status,
+                    min_score=min_score, include_metadata=include_metadata,
+                    project_root_hint=project_root_hint, allowed_roots_hint=allowed_roots_hint,
+                    registry_fingerprint_hint=registry_fingerprint_hint,
+                    context_fingerprint_hint=context_fingerprint_hint,
+                )
+                return replace(resolved, ad_hoc=True)
             project_id, root_id = owner.project_id, owner.root_id
         project = self._projects.get(str(project_id or ""))
         if project is None:
@@ -366,9 +418,22 @@ class ProjectRegistry:
         if working_directory is not None:
             if project_id:
                 raise ValueError("working_directory cannot be combined with project_id")
-            project_id = self.owner_for_path(
-                _canonical_root(working_directory, "working_directory")
-            ).project_id
+            requested = workspace_definition(working_directory).roots["workspace"]
+            try:
+                project_id = self.owner_for_path(requested).project_id
+            except ValueError as exc:
+                if str(exc) != "Path is outside all registered roots":
+                    raise
+                workspace = workspace_definition(working_directory)
+                if workspace.project_id in self._projects:
+                    raise ValueError("Workspace identity conflicts with registered project")
+                return ProjectRegistry([*self.projects, workspace]).resolve_knowledge(
+                    project_id=workspace.project_id, read_scope=read_scope,
+                    agent_id=agent_id, session_id=session_id, source_types=source_types,
+                    language=language, min_score=min_score, include_metadata=include_metadata,
+                    registry_fingerprint_hint=registry_fingerprint_hint,
+                    context_fingerprint_hint=context_fingerprint_hint,
+                )
         project = self._projects.get(str(project_id or ""))
         if project is None:
             raise ValueError("Unknown project_id")
@@ -447,6 +512,7 @@ class ProjectContext:
     include_metadata: bool = True
     registry_fingerprint: str = ""
     context_fingerprint: str = ""
+    ad_hoc: bool = False
 
     def __post_init__(self) -> None:
         for name in ("project_id", "project_name", "root_id"):
@@ -475,9 +541,12 @@ class ProjectContext:
         candidate = Path(value).expanduser()
         if not candidate.is_absolute():
             candidate = Path(self.project_root) / candidate
+        original = candidate
         candidate = _canonical_path(candidate, "path", must_exist=must_exist)
         if not _is_within(candidate, Path(self.project_root)):
             raise ValueError("Path is outside the active registered root")
+        if candidate != original:
+            raise ValueError("Symbolic links are not allowed in paths")
         return candidate
 
     @property
@@ -509,6 +578,13 @@ class ProjectContext:
         )
 
     def to_request_dict(self) -> dict[str, Any]:
+        if self.ad_hoc:
+            return {
+                "working_directory": self.project_root,
+                "write_visibility": self.write_visibility.value,
+                "validation_status": self.validation_status.value,
+                **_common_request_fields(self),
+            }
         return {
             "project_id": self.project_id,
             "root_id": self.root_id,
@@ -574,6 +650,32 @@ class KnowledgeContext:
 
 
 @dataclass(frozen=True, slots=True)
+class GlobalWriteContext:
+    write_visibility: WriteVisibility
+    read_scope: ReadScope
+    agent_id: str
+    session_id: str
+    validation_status: ValidationStatus = ValidationStatus.UNVERIFIED
+    source_types: tuple[str, ...] = field(default_factory=tuple)
+    language: str = "en"
+    min_score: float = 0.0
+    include_metadata: bool = True
+    project_id: str = field(default="__global_knowledge__", init=False)
+    project_name: str = field(default="Global knowledge", init=False)
+    root_id: str = field(default="global", init=False)
+    project_root: str = field(default="", init=False)
+
+    def __post_init__(self) -> None:
+        _normalize_common(self)
+        object.__setattr__(self, "write_visibility", WriteVisibility(self.write_visibility))
+        object.__setattr__(self, "validation_status", ValidationStatus(self.validation_status))
+
+    def to_request_dict(self) -> dict[str, Any]:
+        return {"global_write": True, "write_visibility": self.write_visibility.value,
+                "validation_status": self.validation_status.value, **_common_request_fields(self)}
+
+
+@dataclass(frozen=True, slots=True)
 class WorkingDirectoryContext:
     working_directory: str
     read_scope: ReadScope
@@ -587,7 +689,7 @@ class WorkingDirectoryContext:
     validation_status: ValidationStatus = ValidationStatus.UNVERIFIED
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "working_directory", str(_canonical_root(self.working_directory, "working_directory")))
+        object.__setattr__(self, "working_directory", str(workspace_definition(self.working_directory).roots["workspace"]))
         _normalize_common(self)
         object.__setattr__(self, "write_visibility", WriteVisibility(self.write_visibility))
         object.__setattr__(self, "validation_status", ValidationStatus(self.validation_status))

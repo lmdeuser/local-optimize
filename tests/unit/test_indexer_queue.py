@@ -80,7 +80,7 @@ def test_burst_uses_one_worker_and_bounded_pending_set(tmp_path):
 
 
 def test_reconciliation_excludes_models_artifacts_and_symlinks(tmp_path):
-    for name in ("artifacts", "models", ".git", "evaluation"):
+    for name in ("artifacts", "models", ".git", "evaluation", "Scretch", "BlenderContent"):
         (tmp_path / name).mkdir()
         (tmp_path / name / "unsafe.py").touch()
     (tmp_path / "file.py").touch()
@@ -128,3 +128,22 @@ def test_reconciliation_requeues_file_dropped_by_capacity_limit(tmp_path):
     queue.reconcile()
 
     assert str(second) in queue.pending
+
+
+def test_bounded_reconciliation_resumes_and_does_not_delete_before_scan_finishes(tmp_path):
+    paths = [tmp_path / f"{index}.py" for index in range(5)]
+    for path in paths:
+        path.write_text("content")
+    missing = tmp_path / "missing.py"
+    queue = IndexQueue(tmp_path, lambda *_: True, is_indexable_path, scan_limit=3)
+    queue.confirmed[str(missing)] = [1, 1]
+
+    queue.reconcile()
+    assert len(queue.pending) == 2
+    assert str(missing) not in queue.pending
+    queue.reconcile()
+    assert len(queue.pending) == 5
+    assert str(missing) not in queue.pending
+    queue.reconcile()
+    assert set(queue.pending) == {str(path) for path in paths} | {str(missing)}
+    assert queue.pending[str(missing)][1] == "delete"

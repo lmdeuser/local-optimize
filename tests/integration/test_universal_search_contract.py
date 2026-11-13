@@ -17,6 +17,9 @@ class SearchEngine:
         self.calls = []
         self._pool = object()
 
+    def list_readable_projects(self, _context):
+        return [("first", "First"), ("second", "Second"), ("memory", "Memory"), ("unregistered", "Unregistered")]
+
     def search(self, context, query, limit=5):
         self.calls.append((context.project_id, query, limit))
         return {
@@ -75,6 +78,36 @@ def test_http_resolves_client_working_directory_without_project(registry, tmp_pa
     assert response.json()["results"][0]["project_id"] == "second"
 
 
+def test_http_accepts_unregistered_workspace(registry, tmp_path):
+    workspace = tmp_path / "unregistered"
+    workspace.mkdir()
+    engine = SearchEngine()
+    response = run_search(registry, engine, {"working_directory": str(workspace), "read_scope": "shared"})
+    assert response.status_code == 200, response.text
+    assert engine.calls[0][0].startswith("ws:")
+
+
+def test_http_global_save_does_not_authorize_file_indexing(registry):
+    class Engine(SearchEngine):
+        def save(self, context, **_kwargs):
+            self.calls.append(context.project_id)
+            return {"status": "success"}
+
+    engine = Engine()
+    app.state.engine_factory = lambda: engine
+    app.dependency_overrides[get_rag_engine] = lambda: engine
+    headers = {"X-Local-RAG-Session": "test-session-1234567890"}
+    try:
+        with TestClient(app) as client:
+            saved = client.post("/save", json={"context": {}, "content": "A rootless knowledge fixture"}, headers=headers)
+            indexed = client.post("/index_code", json={"context": {}, "path": "/etc/passwd"}, headers=headers)
+    finally:
+        app.dependency_overrides.clear()
+    assert saved.status_code == 200
+    assert engine.calls == ["__global_knowledge__"]
+    assert indexed.status_code == 422
+
+
 def test_http_global_search_is_explicit_bounded_and_has_origins(registry):
     engine = SearchEngine()
     response = run_search(registry, engine, {
@@ -83,17 +116,17 @@ def test_http_global_search_is_explicit_bounded_and_has_origins(registry):
     })
     assert response.status_code == 200, response.text
     body = response.json()
-    assert {call[0] for call in engine.calls} == {"first", "second", "memory"}
-    assert {hit["project_id"] for hit in body["results"]} == {"first", "second", "memory"}
+    assert {call[0] for call in engine.calls} == {"first", "second", "memory", "unregistered"}
+    assert {hit["project_id"] for hit in body["results"]} <= {"first", "second", "memory", "unregistered"}
     assert body["partial"] is False
     assert len(body["results"]) <= 3
 
 
-def test_http_plain_search_still_requires_one_context(registry):
+def test_http_plain_search_defaults_to_global(registry):
     engine = SearchEngine()
     response = run_search(registry, engine, {"read_scope": "shared"})
-    assert response.status_code == 422
-    assert engine.calls == []
+    assert response.status_code == 200
+    assert {call[0] for call in engine.calls} == {"first", "second", "memory", "unregistered"}
 
 
 def test_http_global_search_marks_failed_project_partial(registry):
@@ -149,6 +182,9 @@ def test_http_global_search_has_at_most_two_active_projects(registry):
 def test_http_global_agentic_search_has_origins_and_global_limits(registry):
     class AgenticEngine:
         _pool = object()
+
+        def list_readable_projects(self, _context):
+            return [("first", "First"), ("second", "Second"), ("unregistered", "Unregistered")]
 
         def agentic_search(self, context, **_kwargs):
             return {

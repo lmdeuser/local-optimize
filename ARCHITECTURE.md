@@ -38,19 +38,19 @@ Structured retrieved evidence is gated by result coverage: ordinary queries need
 
 `MCP tool → RagClient → FastAPI → RagEngine → aiagent.public → retrieved evidence → local formatter → cited answer`
 
-Every request uses one of three explicit context forms: `project_id`/`root_id` plus `context_fingerprint`, a client `working_directory`, or `global_search=true` for read-only fan-out. FastAPI resolves canonical names, roots and current access from its own registry before calling the engine. There is no engine-project, server-cwd or registry fallback. A missing registry and `projects: []` both mean no connected sources and do not prevent readiness when the other dependencies are ready.
+Requests can use a registered `project_id`/`root_id` with a fingerprint, a client `working_directory`, or a global read. An unregistered working directory receives a deterministic `ws:` identity based on its canonical path; a registered root retains its existing identity. A missing or empty registry is valid. Without selectors, searches fan out across database projects visible to the caller, while save, verify and deprecate use a separate global knowledge scope. Filesystem operations always require a working root.
 
-MCP `roots/list` supplies workspace hints, not necessarily the current directory. One local file root can be used as `working_directory`; multiple roots require an explicit cwd or project/root. Direct HTTP clients send `working_directory` and the server resolves it. Unknown, missing, conflicting and ambiguous selectors fail without fallback.
+MCP `roots/list` supplies workspace hints, not necessarily the current directory. File operations can use one local file root or an explicit cwd; conflicting or ambiguous selectors fail. Search and knowledge writes without selectors use their global scopes.
 
 ## Project and Path Boundary
 
 `ProjectContext` contains server-resolved `project_id`, `project_name`, `root_id`, `project_root`, and registered roots plus independent `write_visibility`, `read_scope`, owner IDs, source/language filters, validation status, score threshold, and metadata policy. `KnowledgeContext` supports retrieval without a filesystem root; `WorkingDirectoryContext` and `GlobalKnowledgeContext` are client request forms resolved by FastAPI.
 
-One canonical path has exactly one owner: the most deeply nested registered root. `..`, symlink escapes, prefix confusion, duplicate roots, sibling-root access and paths outside every registered root are rejected. Parent watchers and manual indexing exclude separately registered nested roots. Retrieval also checks stored project/root ownership on every response, including cache hits, so older misattributed rows cannot leak after a nested registration.
+One canonical path has exactly one owner: the most deeply nested registered root, or the active ad-hoc root when no registered owner applies. System directories, `..`, symbolic links, prefix confusion, duplicate roots and sibling-root access are rejected. Parent watchers and manual indexing exclude separately registered nested roots. Retrieval checks source ownership and snapshots on every response, including cache hits; legacy roots absent from the registry are accepted only against their stored database root.
 
-The scoped `context_fingerprint` covers the visible project roots and all nested exclusions. An unrelated registration leaves it unchanged; changing roots or nested ownership invalidates old contexts and both search and local-answer caches. No snapshot history is required. Legacy global `registry_fingerprint` requests are accepted only while that fingerprint equals the current registry; global search requires no client fingerprint and uses only the current server registry.
+The scoped `context_fingerprint` covers the visible project roots and nested exclusions. An unrelated registration leaves a registered context unchanged; changing ownership invalidates affected caches. Legacy global `registry_fingerprint` requests are accepted only while that fingerprint equals the current registry.
 
-Explicit `global_search=true` calls the existing ACL-scoped retrieval independently per project, including rootless knowledge. Batches have at most two active project calls, one shared deadline and global result/graph limits. Results carry project/root provenance. Full success requires every project to complete; otherwise the response is `partial` and `unavailable`, never a complete `rag_answer`. Per-project L1/L2 caches and all SQL ACL predicates remain in force.
+Global search enumerates projects from ACL-filtered database rows and calls scoped retrieval independently for each one. Batches have at most two active project calls, one shared deadline and global result/graph limits. Results carry project/root provenance. Full success requires every project to complete; otherwise the response is `partial` and `unavailable`. Per-project caches and SQL ACL predicates remain in force.
 
 ## Security Scope
 
@@ -120,13 +120,18 @@ Test fixtures participate only when the question explicitly concerns tests
 retrieval time, including old index rows. A benchmark question is not evidence
 answering itself. Identifier-property checks include single-word properties.
 
-The watchdog supervisor dynamically reconciles every registered project/root at
-startup and every five minutes without restarting. One shared worker drains per-root
+The watchdog supervisor reconciles only roots explicitly listed in the
+`WATCHDOG_PATHS` environment variable (colon-separated on Linux). An empty list
+leaves the service idle. It watches each selected root non-recursively; changes
+in nested directories are discovered by the periodic scan, normally every five
+minutes. One shared worker drains per-root
 queues (at most 500 pending paths each), with three attempts per event and up to
-10,000 files per root scan. Retained roots refresh their complete request context
+10,000 directory or file entries per root per pass. Larger scans resume on subsequent passes; missing
+files are retired only after a scan completes. At most 64 roots are watched.
+Retained roots refresh their complete request context
 and repeat file reconciliation after registry or nested-ownership changes and on
-every periodic pass, recovering queue overflow drops and exhausted retries. New roots
-join automatically; changed roots are rewatched; removed roots stop future work
+every periodic pass, recovering missed events and exhausted retries. Selected roots
+join when registered; changed roots are rewatched; removed roots stop future work
 without deleting knowledge. Separately registered
 nested roots are pruned from parent events and reconciliation. Ignored directories,
 symlinks, model weights, artifacts and evaluation fixtures are never indexed. Its

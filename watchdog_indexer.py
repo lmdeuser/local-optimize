@@ -8,12 +8,15 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from indexer_queue import IndexQueue
-from watchdog.events import FileSystemEventHandler
+from indexer_queue import CODE_EXTENSIONS, DOCUMENT_EXTENSIONS, IGNORED_DIRS, IndexQueue
+from watchdog.events import (
+    FileClosedEvent, FileCreatedEvent, FileDeletedEvent, FileModifiedEvent,
+    FileMovedEvent, FileSystemEventHandler,
+)
 from watchdog.observers import Observer
 
 from config import settings
-from project_context import get_project_registry
+from project_context import get_project_registry, workspace_definition
 from rag_client import RagClient
 
 BASE_DIR = settings.project_root
@@ -26,17 +29,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger("watchdog_indexer")
 
-CODE_EXTENSIONS = {".py"}
-DOC_EXTENSIONS = {".md", ".txt", ".json", ".yaml", ".yml", ".sql", ".sh"}
+DOC_EXTENSIONS = DOCUMENT_EXTENSIONS
 VALID_EXTENSIONS = CODE_EXTENSIONS | DOC_EXTENSIONS
-IGNORE_DIRS = {
-    "__pycache__", ".git", "venv", ".venv", "rag-venv", "node_modules", "brain", "logs",
-    "artifacts", "evaluation", "backup", "backups", "models", "refactored-agent-skills",
-    ".pytest_cache", ".mypy_cache", ".ruff_cache", "dist", "build",
-}
+IGNORE_DIRS = IGNORED_DIRS
 BINARY_EXTENSIONS = {".pyc", ".so", ".o", ".zip", ".tar", ".gz", ".png", ".jpg", ".db", ".onnx"}
 DEBOUNCE_DELAY = 1.0
 MAX_PENDING = 500
+MAX_WATCH_ROOTS = 64
+WATCH_EVENTS = [FileClosedEvent, FileCreatedEvent, FileDeletedEvent, FileModifiedEvent, FileMovedEvent]
 
 
 def get_max_file_size() -> int:
@@ -83,11 +83,7 @@ class DebouncedIndexer:
         if not is_indexable_path(relative):
             return False
         candidate = Path(self.context.project_root) / relative
-        return self.registry.is_owned_by(
-            candidate,
-            project_id=self.context.project_id,
-            root_id=self.context.root_id,
-        )
+        return self.registry.owns_context_path(self.context, candidate)
 
     def trigger(self, action: str, file_path: str, dest_path: Optional[str] = None):
         if action == "move" and dest_path and not self.queue._allowed(file_path):
@@ -99,11 +95,7 @@ class DebouncedIndexer:
             if len(str(path)) > 4096:
                 return False
             self.context.validate_path(path, must_exist=path.exists())
-            return self.registry.is_owned_by(
-                path,
-                project_id=self.context.project_id,
-                root_id=self.context.root_id,
-            )
+            return self.registry.owns_context_path(self.context, path)
         except (OSError, RuntimeError, ValueError):
             return False
 
@@ -195,8 +187,12 @@ class CodebaseChangeHandler(FileSystemEventHandler):
 
 
 class WatchdogSupervisor:
-    def __init__(self, *, reconcile_interval: float = 300.0):
+    def __init__(self, *, reconcile_interval: float = 300.0, watch_paths=()):
         self.reconcile_interval = reconcile_interval
+        paths = sorted({workspace_definition(path).roots["workspace"] for path in watch_paths})
+        if len(paths) > MAX_WATCH_ROOTS:
+            logger.warning("Only %d watch roots are allowed; remaining paths are not watched", MAX_WATCH_ROOTS)
+        self.watch_paths = set(paths[:MAX_WATCH_ROOTS])
         self.observer = Observer()
         self.indexers: dict[tuple[str, str], DebouncedIndexer] = {}
         self.watches: dict[tuple[str, str], object] = {}
@@ -218,18 +214,22 @@ class WatchdogSupervisor:
     def reconcile_registry(self) -> None:
         registry = get_project_registry(settings)
         desired = {}
-        for project in registry.projects:
-            for root_id in project.roots:
-                key = (project.project_id, root_id)
-                desired[key] = registry.resolve(
-                    project_id=project.project_id,
-                    root_id=root_id,
+        for path in self.watch_paths:
+            try:
+                context = registry.resolve(
+                    working_directory=str(path),
                     agent_id="watchdog-indexer",
                     session_id="watchdog-service",
                     write_visibility=os.getenv("INDEX_VISIBILITY", "shared"),
                     read_scope="shared",
                     validation_status="unverified",
                 )
+                if Path(context.project_root) != path:
+                    logger.warning("Watch path is inside a registered root; select the registered root explicitly: %s", path)
+                    continue
+                desired[(context.project_id, context.root_id)] = context
+            except (OSError, ValueError) as exc:
+                logger.warning("Watch path is unavailable or rejected: %s (%s)", path, type(exc).__name__)
         for key in list(self.indexers):
             if key not in desired or self.indexers[key].context.project_root != desired[key].project_root:
                 self._remove(key)
@@ -244,7 +244,8 @@ class WatchdogSupervisor:
             indexer = DebouncedIndexer(context=context, registry=registry)
             self.indexers[key] = indexer
             self.watches[key] = self.observer.schedule(
-                CodebaseChangeHandler(indexer), path=context.project_root, recursive=True,
+                CodebaseChangeHandler(indexer), path=context.project_root, recursive=False,
+                event_filter=WATCH_EVENTS,
             )
             indexer.queue.reconcile()
 
@@ -293,7 +294,8 @@ def start_watcher():
     interval = float(os.getenv("WATCHDOG_RECONCILE_SECONDS", "300"))
     if interval < 1:
         raise ValueError("WATCHDOG_RECONCILE_SECONDS must be at least 1")
-    WatchdogSupervisor(reconcile_interval=interval).run()
+    watch_paths = [path for path in os.getenv("WATCHDOG_PATHS", "").split(os.pathsep) if path]
+    WatchdogSupervisor(reconcile_interval=interval, watch_paths=watch_paths).run()
 
 
 if __name__ == "__main__":

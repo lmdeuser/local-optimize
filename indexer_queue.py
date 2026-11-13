@@ -8,14 +8,29 @@ import time
 from pathlib import Path
 from threading import Condition, Thread
 
+CODE_EXTENSIONS = frozenset({".py"})
+DOCUMENT_EXTENSIONS = frozenset({".md", ".txt", ".jsonl", ".json", ".yaml", ".yml", ".sql", ".sh"})
+IGNORED_DIRS = frozenset({
+    "__pycache__", ".git", "venv", ".venv", "rag-venv", "node_modules", ".mimocode",
+    "artifacts", "evaluation", "backup", "backups", "models", "refactored-agent-skills",
+    ".pytest_cache", ".mypy_cache", ".ruff_cache", "dist", "build", "brain", "logs",
+    ".agents", ".claude", ".cursor", ".vscode", "Scretch", "BlenderContent",
+})
+
 
 class IndexQueue:
-    def __init__(self, root, process, indexable, *, capacity=500, debounce=1.0):
+    def __init__(self, root, process, indexable, *, capacity=500, debounce=1.0, scan_limit=10000):
         self.root = Path(root).resolve()
         self.process = process
         self.indexable = indexable
         self.capacity = capacity
         self.debounce = debounce
+        if scan_limit < 1:
+            raise ValueError("scan_limit must be positive")
+        self.scan_limit = scan_limit
+        self._scan = None
+        self._scan_seen = set()
+        self._scan_complete = True
         self.pending = {}
         self.condition = Condition()
         self.stopping = False
@@ -74,36 +89,45 @@ class IndexQueue:
         if self.worker is not None:
             self.worker.join(timeout=10)
 
-    def reconcile(self):
-        """Scan metadata only; ignored directories and symlinks are never traversed."""
-        seen = set()
-        complete = True
+    def _scan_paths(self):
         def scan_error(_error):
-            nonlocal complete
-            complete = False
+            self._scan_complete = False
         for directory, dirs, files in os.walk(self.root, followlinks=False, onerror=scan_error):
+            yield None
             dirs[:] = [name for name in dirs if self.indexable(Path(directory).relative_to(self.root) / name / "probe.py")
                        and not (Path(directory) / name).is_symlink()]
             for name in files:
                 path = str(Path(directory) / name)
                 if not self._allowed(path):
+                    yield None
                     continue
-                seen.add(path)
-                if len(seen) > 10000:
-                    complete = False
-                    break
-                with self.condition:
-                    old = self.confirmed.get(path)
-                current = self.fingerprint(path)
-                if current != old:
-                    self.enqueue("modify", path)
-            if not complete:
-                break
-        if complete:
+                yield path
+
+    def reconcile(self):
+        """Resume a bounded metadata scan; delete only after a complete scan."""
+        if self._scan is None:
+            self._scan_seen = set()
+            self._scan_complete = True
+            self._scan = self._scan_paths()
+        for _ in range(self.scan_limit):
+            try:
+                path = next(self._scan)
+            except StopIteration:
+                self._scan = None
+                if self._scan_complete:
+                    with self.condition:
+                        missing = set(self.confirmed) - self._scan_seen
+                    for missing_path in missing:
+                        self.enqueue("delete", missing_path)
+                self._scan_seen = set()
+                return
+            if path is None:
+                continue
+            self._scan_seen.add(path)
             with self.condition:
-                missing = set(self.confirmed) - seen
-            for path in missing:
-                self.enqueue("delete", path)
+                old = self.confirmed.get(path)
+            if self.fingerprint(path) != old:
+                self.enqueue("modify", path)
 
     def process_next(self):
         with self.condition:

@@ -13,6 +13,8 @@ The package targets Ubuntu 26.04/amd64 and provisions Python 3.14 Intel XPU depe
 The only permitted local packaging entrypoint is the project-local runner:
 
 ```bash
+mkdir -p /srv/temp/local-optimize-obs
+export TMPDIR=/srv/temp/local-optimize-obs
 packaging/run-obs-source-local.sh
 ```
 

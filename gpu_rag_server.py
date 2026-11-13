@@ -13,6 +13,7 @@ Fully hardened:
 
 import hashlib
 import hmac
+import hashlib
 import json
 import logging
 import os
@@ -34,6 +35,7 @@ from pydantic import BaseModel, Field
 from config import settings
 from project_context import (
     GlobalKnowledgeContext,
+    GlobalWriteContext,
     KnowledgeContext,
     ProjectContext,
     get_project_registry,
@@ -378,6 +380,7 @@ class ProjectContextRequest(BaseModel):
     project_id: Optional[str] = None
     root_id: Optional[str] = None
     working_directory: Optional[str] = None
+    global_write: bool = False
     write_visibility: WriteVisibility = WriteVisibility.SESSION_PRIVATE
     read_scope: ReadScope = ReadScope.SESSION
     agent_id: str = ""
@@ -392,7 +395,16 @@ class ProjectContextRequest(BaseModel):
     registry_fingerprint: Optional[str] = Field(default=None, min_length=8, max_length=128)
     context_fingerprint: Optional[str] = Field(default=None, min_length=8, max_length=128)
 
-    def to_context(self, *, agent_id: str, session_id: str) -> ProjectContext:
+    def to_context(self, *, agent_id: str, session_id: str, allow_rootless: bool = False) -> ProjectContext | GlobalWriteContext:
+        if self.global_write or not (self.working_directory or self.project_id or self.root_id):
+            if not allow_rootless or self.working_directory or self.project_id or self.root_id:
+                raise HTTPException(status_code=422, detail="Global writes are not permitted for this operation")
+            return GlobalWriteContext(
+                write_visibility=self.write_visibility, read_scope=self.read_scope,
+                agent_id=agent_id, session_id=session_id,
+                validation_status=self.validation_status, source_types=tuple(self.source_types),
+                language=self.language, min_score=self.min_score, include_metadata=self.include_metadata,
+            )
         if self.working_directory and (self.project_id or self.root_id):
             raise HTTPException(status_code=422, detail="working_directory cannot be combined with project/root")
         if not self.working_directory and (not self.project_id or not self.root_id):
@@ -441,7 +453,7 @@ class KnowledgeContextRequest(BaseModel):
     context_fingerprint: Optional[str] = Field(default=None, min_length=8, max_length=128)
 
     def to_context(self, *, agent_id: str, session_id: str) -> KnowledgeContext | ProjectContext | GlobalKnowledgeContext:
-        if self.global_search:
+        if self.global_search or not (self.project_id or self.root_id or self.working_directory):
             if self.project_id or self.root_id or self.working_directory:
                 raise HTTPException(status_code=422, detail="global_search cannot be combined with project/root/cwd")
             return GlobalKnowledgeContext(
@@ -691,6 +703,30 @@ def _with_project_origin(raw: dict, context: KnowledgeContext) -> dict:
     return {**raw, "results": results}
 
 
+async def _readable_global_contexts(engine, registry, context: GlobalKnowledgeContext):
+    projects = await run_bounded_search(lambda: engine.list_readable_projects(context))
+    contexts = []
+    registered = {project.project_id for project in registry.projects}
+    for project_id, name in projects:
+        fields = dict(
+            read_scope=context.read_scope.value, agent_id=context.agent_id,
+            session_id=context.session_id, source_types=context.source_types,
+            language=context.language, min_score=context.min_score,
+            include_metadata=context.include_metadata,
+        )
+        if project_id in registered:
+            contexts.append(registry.resolve_knowledge(project_id=project_id, **fields))
+        else:
+            fingerprint = hashlib.sha256(
+                (registry.fingerprint + "\x1f" + project_id).encode("utf-8")
+            ).hexdigest()
+            contexts.append(KnowledgeContext(
+                project_id=project_id, project_name=name or project_id,
+                context_fingerprint="sha256:" + fingerprint, **fields,
+            ))
+    return contexts
+
+
 async def _global_search(
     req: SearchRequest,
     context: GlobalKnowledgeContext,
@@ -703,26 +739,14 @@ async def _global_search(
     results: list[dict] = []
     caches: dict[str, dict] = {}
     candidates = 0
-    projects = list(registry.projects)
+    projects = await _readable_global_contexts(engine, registry, context)
 
     for start in range(0, len(projects), 2):
         batch_projects = projects[start:start + 2]
         if time.monotonic() >= deadline:
             omitted.extend(project.project_id for project in batch_projects)
             continue
-        contexts = [
-            registry.resolve_knowledge(
-                project_id=project.project_id,
-                read_scope=context.read_scope.value,
-                agent_id=context.agent_id,
-                session_id=context.session_id,
-                source_types=context.source_types,
-                language=context.language,
-                min_score=context.min_score,
-                include_metadata=context.include_metadata,
-            )
-            for project in batch_projects
-        ]
+        contexts = batch_projects
 
         async def run_project(current):
             raw = await run_bounded_search(lambda: engine.search(
@@ -919,7 +943,7 @@ async def _global_agentic_search(
     omitted: list[str] = []
     results: list[dict] = []
     graph: list[dict] = []
-    projects = list(registry.projects)
+    projects = await _readable_global_contexts(engine, registry, context)
     traversed = 0
     partial = False
 
@@ -928,19 +952,7 @@ async def _global_agentic_search(
         if time.monotonic() >= deadline:
             omitted.extend(project.project_id for project in batch_projects)
             continue
-        contexts = [
-            registry.resolve_knowledge(
-                project_id=project.project_id,
-                read_scope=context.read_scope.value,
-                agent_id=context.agent_id,
-                session_id=context.session_id,
-                source_types=context.source_types,
-                language=context.language,
-                min_score=context.min_score,
-                include_metadata=context.include_metadata,
-            )
-            for project in batch_projects
-        ]
+        contexts = batch_projects
 
         async def run_project(current):
             remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
@@ -1254,7 +1266,7 @@ async def save(
 ):
     loop = asyncio.get_running_loop()
     context = req.context.to_context(
-        agent_id=request.state.agent_id, session_id=request.state.session_id
+        agent_id=request.state.agent_id, session_id=request.state.session_id, allow_rootless=True
     )
 
     try:
@@ -1294,7 +1306,7 @@ async def deprecate(req: DeprecateRequest, request: Request, engine: RagEngine =
     retraction that matched nothing is a result the caller has to see, not an
     error to swallow.
     """
-    context = req.context.to_context(agent_id=request.state.agent_id, session_id=request.state.session_id)
+    context = req.context.to_context(agent_id=request.state.agent_id, session_id=request.state.session_id, allow_rootless=True)
     loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(
@@ -1327,7 +1339,7 @@ async def deprecate(req: DeprecateRequest, request: Request, engine: RagEngine =
 @app.post("/v1/verify")
 async def verify(req: VerifyRequest, request: Request, engine: RagEngine = Depends(get_rag_engine)):
     """Record that a fact was re-confirmed. Reports `updated: 0` when nothing matched."""
-    context = req.context.to_context(agent_id=request.state.agent_id, session_id=request.state.session_id)
+    context = req.context.to_context(agent_id=request.state.agent_id, session_id=request.state.session_id, allow_rootless=True)
     loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(

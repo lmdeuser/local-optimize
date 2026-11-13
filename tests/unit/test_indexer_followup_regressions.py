@@ -19,7 +19,7 @@ def test_retained_root_reconciles_files_and_refreshes_context(tmp_path, monkeypa
     nested.mkdir(parents=True)
     current = ProjectRegistry([ProjectDefinition("parent", "Parent", {"primary": parent})])
     monkeypatch.setattr(watchdog_indexer, "get_project_registry", lambda _settings: current)
-    supervisor = watchdog_indexer.WatchdogSupervisor()
+    supervisor = watchdog_indexer.WatchdogSupervisor(watch_paths=[parent])
     try:
         supervisor.reconcile_registry()
         indexer = supervisor.indexers[("parent", "primary")]
@@ -145,7 +145,7 @@ def test_retained_root_reconciles_files_on_every_interval(tmp_path, monkeypatch)
     root.mkdir()
     current = ProjectRegistry([ProjectDefinition("root", "Root", {"primary": root})])
     monkeypatch.setattr(watchdog_indexer, "get_project_registry", lambda _settings: current)
-    supervisor = watchdog_indexer.WatchdogSupervisor()
+    supervisor = watchdog_indexer.WatchdogSupervisor(watch_paths=[root])
     try:
         supervisor.reconcile_registry()
         indexer = supervisor.indexers[("root", "primary")]
