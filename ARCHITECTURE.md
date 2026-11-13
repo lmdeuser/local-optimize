@@ -135,8 +135,10 @@ join when registered; changed roots are rewatched; removed roots stop future wor
 without deleting knowledge. Separately registered
 nested roots are pruned from parent events and reconciliation. Ignored directories,
 symlinks, model weights, artifacts and evaluation fixtures are never indexed. Its
-private `.rag-index-state.json` acknowledges only successful, unchanged source
-versions. The central HTTP engine owns the single ML runtime; watchers instantiate
+private state under `$XDG_STATE_HOME/local-optimize/indexer/` (or
+`~/.local/state/local-optimize/indexer/`) acknowledges only successful, unchanged
+source versions. Existing root-local state is read for compatibility until migrated.
+The central HTTP engine owns the single ML runtime; watchers instantiate
 no per-project models.
 
 ## Intel Arc execution contract (2026-10-29)

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import logging
 import os
 import time
 from pathlib import Path
 from threading import Condition, Thread
 
+logger = logging.getLogger(__name__)
 CODE_EXTENSIONS = frozenset({".py"})
 DOCUMENT_EXTENSIONS = frozenset({".md", ".txt", ".jsonl", ".json", ".yaml", ".yml", ".sql", ".sh"})
 IGNORED_DIRS = frozenset({
@@ -35,12 +38,20 @@ class IndexQueue:
         self.condition = Condition()
         self.stopping = False
         self.worker = None
-        self.state_path = self.root / ".rag-index-state.json"
+        state_home = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))).expanduser()
+        if not state_home.is_absolute():
+            raise ValueError("XDG_STATE_HOME must be an absolute path")
+        state_key = hashlib.sha256(os.fsencode(str(self.root))).hexdigest()
+        self.state_path = state_home / "local-optimize" / "indexer" / f"{state_key}.json"
+        if self.state_path.resolve().is_relative_to(self.root):
+            raise ValueError("Indexer state must be outside the watched root")
+        legacy_path = self.root / ".rag-index-state.json"
+        read_path = self.state_path if self.state_path.exists() else legacy_path
         self.confirmed = {}
-        if self.state_path.is_file() and not self.state_path.is_symlink():
-            if self.state_path.stat().st_size <= 2_000_000:
+        if read_path.is_file() and not read_path.is_symlink():
+            if read_path.stat().st_size <= 2_000_000:
                 try:
-                    data = json.loads(self.state_path.read_text())
+                    data = json.loads(read_path.read_text())
                     if data.get("version") == 1 and data.get("root") == str(self.root):
                         self.confirmed = {key: value for key, value in data.get("files", {}).items()
                                           if self._allowed(key)}
@@ -153,6 +164,7 @@ class IndexQueue:
                     updated[path] = before
                 payload = json.dumps({"version": 1, "root": str(self.root), "files": updated})
             temporary = self.state_path.with_suffix(".pending")
+            self.state_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, "w") as stream:
                 stream.write(payload)
@@ -163,7 +175,8 @@ class IndexQueue:
                 self.enqueue("modify", destination)
                 if before is not None:
                     self.enqueue("modify", path)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Index queue processing failed: %s", type(exc).__name__)
             if attempt < 2:
                 self.enqueue(action, path, destination, attempt=attempt + 1)
         return True

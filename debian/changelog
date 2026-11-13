@@ -1,3 +1,9 @@
+local-optimize (1.0.1-0ubuntu8) resolute; urgency=medium
+
+  * Store indexer state outside watched roots and read legacy state safely.
+
+ -- Local Optimize contributors <28979718+lmdeuser@users.noreply.github.com>  Fri, 13 Nov 2026 19:10:00 +0500
+
 local-optimize (1.0.1-0ubuntu7) resolute; urgency=medium
 
   * Support unregistered working directories and ACL-scoped global knowledge.

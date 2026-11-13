@@ -1,3 +1,4 @@
+import json
 import time
 from threading import Event
 
@@ -7,6 +8,11 @@ from indexer_queue import IndexQueue
 from watchdog_indexer import is_indexable_path
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def isolated_state_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path.parent / (tmp_path.name + "-state")))
 
 
 def wait_for(predicate):
@@ -26,6 +32,8 @@ def test_restart_reconciles_offline_changes_and_deletion(tmp_path):
         calls.append((action, path))
         return True
     queue = IndexQueue(tmp_path, process, is_indexable_path, debounce=0.01)
+    assert not queue.state_path.is_relative_to(tmp_path)
+    assert queue.state_path != tmp_path / ".rag-index-state.json"
     queue.start()
     queue.reconcile()
     wait_for(lambda: queue.state_path.exists())
@@ -57,6 +65,28 @@ def test_failure_is_not_acknowledged_and_retries_are_bounded(tmp_path):
     assert queue.confirmed == {}
     assert not queue.state_path.exists()
     assert len(calls) == 3
+
+
+def test_legacy_root_state_is_read_and_new_state_is_outside_root(tmp_path):
+    source = tmp_path / "note.py"
+    source.write_text("original")
+    fingerprint = IndexQueue.fingerprint(source)
+    legacy = tmp_path / ".rag-index-state.json"
+    legacy.write_text(json.dumps({"version": 1, "root": str(tmp_path), "files": {str(source): fingerprint}}))
+    queue = IndexQueue(tmp_path, lambda *_: True, is_indexable_path, debounce=0)
+    assert queue.confirmed[str(source)] == fingerprint
+    source.write_text("new content")
+    queue.reconcile()
+    assert queue.process_next()
+    assert queue.state_path.is_file()
+    assert not queue.state_path.is_relative_to(tmp_path)
+    assert json.loads(queue.state_path.read_text())["files"][str(source)] == IndexQueue.fingerprint(source)
+
+
+def test_indexer_rejects_state_home_inside_watched_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    with pytest.raises(ValueError, match="outside the watched root"):
+        IndexQueue(tmp_path, lambda *_: True, is_indexable_path)
 
 
 def test_burst_uses_one_worker_and_bounded_pending_set(tmp_path):
