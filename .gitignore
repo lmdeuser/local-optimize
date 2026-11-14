@@ -55,7 +55,7 @@ scripts/
 deploy/systemd/
 
 # Editor, agent and machine-local state
-AGENTS.md
+/AGENTS.md
 .agents/
 .claude/*
 !.claude/settings.json

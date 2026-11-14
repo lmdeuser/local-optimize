@@ -462,3 +462,40 @@ def verify_runtime_schema(
             connection.rollback()
         except Exception:
             pass
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Apply or verify strict versioned SQL migrations for aiagent.public."
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="Verify manifest checksums and schema invariants without modifying the database.",
+    )
+    args = parser.parse_args(argv)
+
+    runner = MigrationRunner.from_default_manifest()
+    if args.verify:
+        statuses = runner.statuses()
+        conn = runner._connect()
+        try:
+            ok = verify_runtime_schema(conn)
+        finally:
+            conn.close()
+        for version, status in statuses.items():
+            print(f"{version}: {status}")
+        return 0 if ok else 1
+
+    committed = runner.apply_all()
+    if committed:
+        print("Applied migrations:", ", ".join(committed))
+    else:
+        print("Database schema is up to date.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

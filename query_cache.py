@@ -23,7 +23,7 @@ class BoundedTTLCache(Generic[K, V]):
         max_entries: int,
         ttl_seconds: float,
         clock: Callable[[], float] = time.monotonic,
-        wait_timeout_seconds: float = 10.0,
+        wait_timeout_seconds: float = 20.0,
     ) -> None:
         self.max_entries = max(0, int(max_entries))
         self.ttl_seconds = max(0.0, float(ttl_seconds))

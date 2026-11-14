@@ -175,7 +175,8 @@ def test_sync_hf_models_checks_upstream_protects_e5_weights_and_handles_offline(
         assert python_bin == venv_python
         downloads.append((repo_id, revision))
         (target_dir / "config.json").write_text("{}", encoding="utf-8")
-        (target_dir / "model.safetensors").write_bytes(b"new-weights-" + revision.encode())
+        weights = b"e5-v1" if revision == "rev-e5-meta" else b"new-weights-" + revision.encode()
+        (target_dir / "model.safetensors").write_bytes(weights)
 
     monkeypatch.setattr(runtime_sync, "_download_hf_snapshot", fake_download)
 
@@ -203,7 +204,7 @@ def test_sync_hf_models_checks_upstream_protects_e5_weights_and_handles_offline(
         upstream_fetcher=lambda repo: (
             {"sha": "rev-e5-2", "weights_sha256": new_weights_sha}
             if "e5" in repo
-            else {"sha": "rev-qwen-2", "weights_sha256": hashlib.sha256(b"qwen-v2").hexdigest()}
+            else {"sha": "rev-qwen-2", "weights_sha256": hashlib.sha256(b"new-weights-rev-qwen-2").hexdigest()}
         ),
     )
     assert updated["multilingual-e5-small"]["status"] == "held_embedding_weights"
@@ -331,3 +332,55 @@ def test_launcher_dispatches_sync_without_venv_and_uses_system_venv_fallback(tmp
     srv_res = subprocess.run([str(launcher), "server"], env=env, capture_output=True, text=True, check=False)
     assert srv_res.returncode == 0, srv_res.stderr
     assert (app_root / "server_script.txt").read_text(encoding="utf-8").endswith("gpu_rag_server.py")
+
+
+def test_huggingface_sync_rejects_weights_sha256_mismatch(tmp_path, monkeypatch):
+    root = tmp_path / "app"
+    (root / "packaging").mkdir(parents=True)
+    (root / "packaging" / "runtime-policy.json").write_text(
+        json.dumps(
+            {
+                "python": "3.14",
+                "models": {
+                    "Qwen3-Reranker-0.6B": {
+                        "role": "reranker",
+                        "repository": "Qwen/Qwen3-Reranker-0.6B",
+                        "revision": "rev-qwen-1",
+                        "required_files": ["config.json", "model.safetensors"],
+                        "weights_sha256": "f" * 64,
+                    }
+                },
+                "ollama": {"model": "qwen2.5-coder:7b", "repository": "library/qwen2.5-coder", "tag": "7b"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    models_dir = tmp_path / "models"
+    venv_python = tmp_path / "venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    def fake_download(_venv_python, _repo, _rev, target_dir):
+        target_dir.mkdir(parents=True, exist_ok=True)
+        (target_dir / "config.json").write_text("{}", encoding="utf-8")
+        (target_dir / "model.safetensors").write_bytes(b"tampered")
+
+    monkeypatch.setattr(runtime_sync, "_download_hf_snapshot", fake_download)
+    with pytest.raises(RuntimeError, match="weights SHA-256 mismatch"):
+        runtime_sync.sync_huggingface_models(
+            root,
+            models_dir=models_dir,
+            venv_python=venv_python,
+            pinned=True,
+        )
+
+
+def test_ollama_sync_rejects_post_pull_digest_mismatch(tmp_path, monkeypatch):
+    root = tmp_path / "app"
+    _write_policy(root)
+    digests = iter(["", "sha256:" + "b" * 64])
+    monkeypatch.setattr(runtime_sync, "_ollama_local_digest", lambda _model: next(digests))
+    monkeypatch.setattr(runtime_sync, "_ollama_pull_stream", lambda _model: None)
+
+    with pytest.raises(RuntimeError, match="Ollama digest mismatch"):
+        runtime_sync.sync_ollama_model(root, pinned=True)

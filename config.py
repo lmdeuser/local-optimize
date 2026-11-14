@@ -60,11 +60,12 @@ class SecretString:
 
 
 def _quote_env_value(value: str) -> str:
+    text = str(value)
+    if any(ch in text for ch in ("\0", "\n", "\r")):
+        raise ValueError("Environment value must not contain newlines or NUL bytes")
     escaped = (
-        str(value)
-        .replace("\\", "\\\\")
+        text.replace("\\", "\\\\")
         .replace('"', '\\"')
-        .replace("$", "$$")
         .replace("`", "\\`")
     )
     return f'"{escaped}"'
@@ -87,10 +88,6 @@ def _parse_env_value(raw_value: str) -> str:
                         result.append(following)
                     index += 2
                     continue
-            if char == "$" and index + 1 < len(value) and value[index + 1] == "$":
-                result.append("$")
-                index += 2
-                continue
             result.append(char)
             index += 1
         return "".join(result)
@@ -147,12 +144,33 @@ def save_secrets_file(
 
         if backup and target.exists():
             import time
-            backup_file = target_dir / f"{target.name}.backup-{time.time_ns()}"
-            with open(backup_file, "xb") as backup_stream:
-                os.chmod(backup_file, 0o600)
-                backup_stream.write(target.read_bytes())
-                backup_stream.flush()
-                os.fsync(backup_stream.fileno())
+
+            stamp = time.time_ns()
+            backup_file = target_dir / f"{target.name}.backup-{stamp}"
+            counter = 0
+            while backup_file.exists():
+                counter += 1
+                backup_file = target_dir / f"{target.name}.backup-{stamp}-{counter}"
+            payload = target.read_bytes()
+            fd = os.open(
+                backup_file,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+            )
+            try:
+                with os.fdopen(fd, "wb") as backup_stream:
+                    backup_stream.write(payload)
+                    backup_stream.flush()
+                    os.fsync(backup_stream.fileno())
+            except Exception:
+                raise
+            backups = sorted(
+                target_dir.glob(f"{target.name}.backup-*"),
+                key=lambda item: item.stat().st_mtime_ns,
+                reverse=True,
+            )
+            for stale_backup in backups[5:]:
+                stale_backup.unlink(missing_ok=True)
 
         with tempfile.NamedTemporaryFile("w", dir=target_dir, delete=False, encoding="utf-8") as tf:
             tmp_path = Path(tf.name)

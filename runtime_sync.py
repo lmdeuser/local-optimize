@@ -522,6 +522,29 @@ def sync_huggingface_models(
             if (target_dir / "model.safetensors").is_file()
             else desired_weights_sha
         )
+        pinned_weights_sha = str(
+            model_policy.get("weights_sha256") or model_policy.get("sha256") or ""
+        ).strip().lower()
+        expected_weights_sha = pinned_weights_sha or desired_weights_sha
+        if (
+            (target_dir / "model.safetensors").is_file()
+            and expected_weights_sha
+            and actual_weights_sha != expected_weights_sha
+        ):
+            raise RuntimeError(
+                f"Model {name} weights SHA-256 mismatch: expected {expected_weights_sha}, got {actual_weights_sha}"
+            )
+        file_sha256s = model_policy.get("file_sha256s") or {}
+        if isinstance(file_sha256s, dict):
+            for rel_path, expected_sha in file_sha256s.items():
+                artifact = target_dir / str(rel_path)
+                if not artifact.is_file():
+                    raise RuntimeError(f"Model {name} missing checksum-pinned file: {rel_path}")
+                actual_file_sha = sha256_file(artifact).lower()
+                if actual_file_sha != str(expected_sha).strip().lower():
+                    raise RuntimeError(
+                        f"Model {name} file {rel_path} SHA-256 mismatch: expected {expected_sha}, got {actual_file_sha}"
+                    )
         state_payload = {
             "format": 1,
             "repository": repo_id,
@@ -700,6 +723,11 @@ def sync_ollama_model(
     new_digest = _ollama_local_digest(model)
     if not new_digest:
         raise RuntimeError(f"Ollama pull completed but model {model} is still missing from /api/tags")
+    normalized_desired = _normalize_digest(desired_digest) if desired_digest else ""
+    if normalized_desired and _normalize_digest(new_digest) != normalized_desired:
+        raise RuntimeError(
+            f"Ollama digest mismatch for {model}: expected {desired_digest}, got {new_digest}"
+        )
     if local_digest and new_digest != local_digest:
         _unload_resident_ollama_model(model)
     return {

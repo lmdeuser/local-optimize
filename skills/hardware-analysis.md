@@ -4,16 +4,16 @@ This document is the MANDATORY execution protocol for an AI agent specialized in
 
 ---
 
-## 🏛️ 1. Code Excellence & Memory Safety (The Law of Zero)
+## 1. Code Excellence & Memory Safety (The Law of Zero)
 
 ### A. Modern C++ Standards (17/20/23)
-- **RAII (Resource Acquisition Is Initialization)**: Mandatory for all resources (Memory, GPIO, Timers). 
+- **RAII (Resource Acquisition Is Initialization)**: Mandatory for all resources (Memory, GPIO, Timers).
   - *Rule*: Use `std::unique_ptr` for exclusive ownership. `std::shared_ptr` is prohibited unless shared ownership is explicitly proven.
   - *Rule*: Categorical prohibition on `new` and `delete`.
 - **Memory Alignment & Locality**:
   - **Android 15 Standard**: Force 16KB page alignment using `alignas(16384)` for buffer allocations to ensure future-proof compatibility.
   - **Cache Optimization**: Implement **Data-Oriented Design (DOD)**. Structure data as Arrays of Structures (AoS) or Structures of Arrays (SoA) to minimize cache misses.
-- **Zero-Copy Architecture**: 
+- **Zero-Copy Architecture**:
   - Use `std::span` (C++20) and `std::string_view` for non-owning views of memory/buffers.
   - Use **DMA (Direct Memory Access)** for peripheral data transfer to bypass CPU cycles.
 
@@ -24,7 +24,7 @@ This document is the MANDATORY execution protocol for an AI agent specialized in
 
 ---
 
-## ⚡ 2. Platform-Specific Engineering Depth
+## 2. Platform-Specific Engineering Depth
 
 ### A. STM32 & ARM Cortex-M
 - **Interrupts**: ISRs must be atomic and non-blocking. Offload heavy lifting to `Main Loop` or `RTOS Tasks` via Semaphores/Queues.
@@ -41,10 +41,10 @@ This document is the MANDATORY execution protocol for an AI agent specialized in
 
 ---
 
-## 📐 3. Hardware & PCB Design (Physical Layer)
+## 3. Hardware & PCB Design (Physical Layer)
 
 ### A. Signal Integrity (SI) & Power Integrity (PI)
-- **Impedance Control**: 
+- **Impedance Control**:
   - USB 2.0: 90Ω Differential.
   - Ethernet/LVDS: 100Ω Differential.
 - **Grounding**: Use a dedicated `GND` plane. Implement **Via Stitching** every 2-5mm for high-frequency return paths.
@@ -56,7 +56,7 @@ This document is the MANDATORY execution protocol for an AI agent specialized in
 
 ---
 
-## 📋 4. The Architect's Deep Audit Checklist
+## 4. The Architect's Deep Audit Checklist
 1.  **Is it Leak-Free?** (Destructors must run in all branches).
 2.  **Is it Zero-Cost?** (No unnecessary virtual functions or abstractions).
 3.  **Is it Thread-Safe?** (Atomic/Mutex usage correct?).
@@ -65,6 +65,6 @@ This document is the MANDATORY execution protocol for an AI agent specialized in
 
 ---
 
-## 🛡️ 5. Security Policy & Environment
+## 5. Security Policy & Environment
 - **Categorical Prohibit on `sudo`**: Use `udev` rules.
 - **Hermetic Toolchains**: Isolation via `PlatformIO` or `uv`.

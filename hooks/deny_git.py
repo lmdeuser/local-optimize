@@ -52,6 +52,10 @@ def evaluate(tool_name: str, tool_input: Any) -> str | None:
     for value in _strings_for_keys(tool_input, PATH_KEYS):
         if GIT_METADATA.search(value):
             return DENY_MESSAGE
+    if tool_name == "Glob":
+        for value in _strings_for_keys(tool_input, {"pattern"}):
+            if GIT_METADATA.search(value):
+                return DENY_MESSAGE
     for value in _strings_for_keys(tool_input, COMMAND_KEYS):
         if GIT_EXECUTABLE.search(value) or GIT_REMOTE.search(value) or GIT_LIBRARY.search(value):
             return DENY_MESSAGE

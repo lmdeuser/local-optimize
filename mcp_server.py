@@ -45,7 +45,9 @@ mcp = FastMCP(
     port=MCP_PORT
 )
 
-sys.path.append(str(BASE_DIR))
+_base_dir_str = str(BASE_DIR)
+if _base_dir_str not in sys.path:
+    sys.path.insert(0, _base_dir_str)
 from rag_client import RagClient
 from response_format import (
     DEFAULT_MAX_CONTENT_CHARS,
@@ -270,6 +272,20 @@ async def build_client_knowledge_context(
         if working_directory:
             raise ClientContextError("INVALID_CONTEXT", "project_id cannot be combined with working_directory.")
         try:
+            if root_id:
+                return build_project_context(
+                    project_id=project_id,
+                    root_id=root_id,
+                    working_directory=None,
+                    write_visibility="session-private",
+                    read_scope=read_scope,
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    source_types=source_types,
+                    language=language,
+                    min_score=min_score,
+                    include_metadata=include_metadata,
+                )
             return build_knowledge_context(
                 project_id=project_id,
                 read_scope=read_scope,
@@ -1116,13 +1132,17 @@ async def route_query_tool(
                 "reason": "Query is empty or exceeds configured maximum",
                 "code": "INVALID_QUERY",
                 "phase": "validation",
+                "privacy_mode": privacy_mode,
                 "correlation": corr,
             }, ensure_ascii=False, separators=(",", ":"))
         if policy != "rag_first":
             return json.dumps({
-                "route": "escalate",
+                "status": "error",
+                "code": "UNSUPPORTED_POLICY",
+                "route": "fallback" if privacy_mode else "escalate",
                 "confidence": 0.0,
                 "reason": "Unsupported routing policy",
+                "privacy_mode": privacy_mode,
                 "correlation": corr,
             }, ensure_ascii=False, separators=(",", ":"))
         project_context = await build_client_knowledge_context(
@@ -1165,6 +1185,7 @@ async def route_query_tool(
                 "code": failure_code,
                 "phase": "retrieval",
                 "elapsed_ms": retrieval_ms,
+                "privacy_mode": privacy_mode,
                 "correlation": corr,
             }, ensure_ascii=False, separators=(",", ":"))
 
@@ -1341,18 +1362,22 @@ async def route_query_tool(
     except Exception as exc:
         logger.exception("Error in route_query_tool request_id=%s", corr["request_id"])
         is_context = isinstance(exc, ClientContextError)
-        return json.dumps({
-            "status": "error" if is_context else "unavailable" if isinstance(exc, TimeoutError) else "error",
-            "route": "fallback" if is_context or privacy_mode else "escalate",
+        route = "fallback" if is_context or privacy_mode else "escalate"
+        payload = {
+            "status": "unavailable" if isinstance(exc, TimeoutError) else "error",
+            "route": route,
             "confidence": 0.0,
             "reason": str(exc) if is_context else "Internal routing error; correlate with server logs using request_id.",
             "code": exc.code if is_context else "RAG_AGENT_TIMEOUT" if isinstance(exc, TimeoutError) else "RAG_AGENT_ERROR",
             "phase": "context" if is_context else "processing",
             "elapsed_ms": int((time.monotonic() - started_at) * 1000),
-            "error_type": type(exc).__name__,
-            "configured_model": OLLAMA_MODEL,
-            "correlation": corr
-        }, ensure_ascii=False, separators=(",", ":"))
+            "privacy_mode": privacy_mode,
+            "correlation": corr,
+        }
+        if route != "escalate":
+            payload["error_type"] = type(exc).__name__
+            payload["configured_model"] = OLLAMA_MODEL
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 @mcp.tool()

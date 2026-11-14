@@ -26,6 +26,8 @@ from installer_context import InstallationContext, ManagedTarget, deduplicate_ta
 BASE_DIR = settings.project_root.resolve()
 UNIT_NAMES = ("gpu-rag-server", "watchdog-indexer")
 logger = logging.getLogger("local_optimize.installer")
+_STDLIB_URLOPEN = urllib.request.urlopen
+_DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 @dataclass
@@ -103,6 +105,7 @@ def _client_targets(clients: Iterable[str]) -> list[ManagedTarget]:
             home / ".gemini" / "antigravity" / "mcp_config.json",
         ],
         "opencode": [home / ".config" / "opencode" / "mcp.json"],
+        "lmstudio": [home / ".lmstudio" / "mcp.json"],
     }
     return [ManagedTarget(f"{client}-mcp", path) for client in clients for path in mapping[client]]
 
@@ -205,6 +208,7 @@ def phase_mcp_config(context: InstallationContext, clients: Sequence[str]) -> Ph
         build_antigravity_mcp_config,
         build_cursor_mcp_config,
         build_gemini_mcp_config,
+        build_lmstudio_mcp_config,
         build_opencode_mcp_config,
     )
 
@@ -213,6 +217,7 @@ def phase_mcp_config(context: InstallationContext, clients: Sequence[str]) -> Ph
         "antigravity": build_antigravity_mcp_config,
         "gemini": build_gemini_mcp_config,
         "opencode": build_opencode_mcp_config,
+        "lmstudio": build_lmstudio_mcp_config,
     }
     if context.dry_run:
         return PhaseResult("mcp_config", "skipped", "Dry-run")
@@ -362,7 +367,12 @@ def _fetch_health(path: str) -> tuple[int, dict[str, object]]:
         f"{settings.rag_server_url}{path}", method="GET", headers=headers
     )
     try:
-        with urllib.request.urlopen(request, timeout=2) as response:
+        response_cm = (
+            _DIRECT_OPENER.open(request, timeout=2)
+            if urllib.request.urlopen is _STDLIB_URLOPEN
+            else urllib.request.urlopen(request, timeout=2)
+        )
+        with response_cm as response:
             return response.status, json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         return exc.code, json.loads(exc.read().decode("utf-8"))
@@ -452,7 +462,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="local_optimize infrastructure installer")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
-        "--client", action="append", choices=["cursor", "antigravity", "gemini", "opencode"]
+        "--client",
+        action="append",
+        choices=["cursor", "antigravity", "gemini", "opencode", "lmstudio"],
     )
     parser.add_argument("--all-clients", action="store_true")
     parser.add_argument("--skip-systemd", action="store_true")

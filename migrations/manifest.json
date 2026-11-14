@@ -750,6 +750,40 @@
           "name": "knowledge_provenance_root_source_idx"
         }
       ]
+    },
+    {
+      "version": "v16",
+      "filename": "0016_strict_owner_and_document_root_scope.sql",
+      "checksum": "0e12ac853d62a6c2ff2d3e36f229cc3b14b07d2b23371b86f42ef5ce095b1a81",
+      "required": true,
+      "transactional": true,
+      "invariants": [
+        {
+          "type": "constraint",
+          "table": "project_knowledge",
+          "name": "project_knowledge_owner_nonblank_check"
+        },
+        {
+          "type": "constraint",
+          "table": "kb_entities",
+          "name": "kb_entities_owner_nonblank_check"
+        },
+        {
+          "type": "constraint",
+          "table": "kb_relations",
+          "name": "kb_relations_owner_nonblank_check"
+        },
+        {
+          "type": "index",
+          "table": "kb_documents",
+          "name": "kb_documents_project_root_source_unique"
+        },
+        {
+          "type": "index",
+          "table": "project_knowledge",
+          "name": "project_knowledge_project_root_file_idx"
+        }
+      ]
     }
   ]
 }

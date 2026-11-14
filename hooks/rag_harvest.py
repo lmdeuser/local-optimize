@@ -34,7 +34,10 @@ import urllib.request
 from typing import Any
 
 SECRET_PATTERN = re.compile(
-    r"password|passwd|secret|token|api[_-]?key|BEGIN [A-Z ]*PRIVATE KEY|Bearer [A-Za-z0-9._-]{16,}",
+    r"password|passwd|secret|token|api[_-]?key|BEGIN [A-Z0-9 ]*PRIVATE KEY"
+    r"|Bearer\s+[A-Za-z0-9._~+/=-]{8,}"
+    r"|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}"
+    r"|glpat-[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{20,}",
     re.IGNORECASE,
 )
 MAX_TRANSCRIPT_BYTES = 120 * 1024
@@ -58,14 +61,91 @@ def debug(msg: str) -> None:
         sys.stderr.write(f"[rag_harvest] {msg}\n")
 
 
-def extract_recent_text(transcript_path: str, max_messages: int = 12) -> str:
-    if not transcript_path or not os.path.isfile(transcript_path):
+def _state_hooks_dir() -> str:
+    override = os.getenv("LOCAL_OPTIMIZE_STATE_DIR", "").strip()
+    if override:
+        return os.path.join(os.path.expanduser(override), "hooks")
+    return os.path.expanduser("~/.local/state/local-optimize/hooks")
+
+
+def _safe_session_key(session_id: str) -> str:
+    return "".join(ch for ch in str(session_id) if ch.isalnum() or ch in "_-")[:64] or "default"
+
+
+def _cursor_path(session_id: str, transcript_path: str) -> str:
+    import hashlib
+
+    digest = hashlib.sha256(os.path.realpath(transcript_path).encode("utf-8", errors="ignore")).hexdigest()[:12]
+    return os.path.join(_state_hooks_dir(), f"harvest-cursor-{_safe_session_key(session_id)}-{digest}.offset")
+
+
+def _read_cursor(cursor_file: str) -> int:
+    if not cursor_file or os.path.islink(cursor_file) or not os.path.isfile(cursor_file):
+        return 0
+    try:
+        fd = os.open(cursor_file, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "r", encoding="utf-8") as handle:
+            value = int(handle.read().strip() or "0")
+            return max(0, value)
+    except (OSError, ValueError):
+        return 0
+
+
+def _write_cursor(cursor_file: str, offset: int) -> None:
+    if not cursor_file or os.path.islink(cursor_file):
+        return
+    try:
+        _ensure_private_dir(os.path.dirname(cursor_file))
+        tmp_path = f"{cursor_file}.tmp"
+        if os.path.islink(tmp_path):
+            return
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | O_TRUNC_FLAG | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(str(max(0, offset)))
+        os.replace(tmp_path, cursor_file)
+        os.chmod(cursor_file, 0o600)
+    except OSError:
+        pass
+
+
+O_TRUNC_FLAG = os.O_TRUNC
+
+
+def extract_recent_text(transcript_path: str, max_messages: int = 12, *, session_id: str = "") -> str:
+    if not transcript_path or os.path.islink(transcript_path) or not os.path.isfile(transcript_path):
         return ""
-    file_size = os.path.getsize(transcript_path)
-    with open(transcript_path, "rb") as f:
-        if file_size > MAX_TRANSCRIPT_BYTES:
-            f.seek(file_size - MAX_TRANSCRIPT_BYTES)
-        raw_data = f.read()
+    try:
+        fd = os.open(transcript_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "rb") as f:
+            file_size = os.fstat(f.fileno()).st_size
+            saved_offset = _read_cursor(_cursor_path(session_id, transcript_path)) if session_id else 0
+            if saved_offset > file_size:
+                saved_offset = 0
+            read_start = max(saved_offset, max(0, file_size - MAX_TRANSCRIPT_BYTES))
+            if read_start:
+                f.seek(read_start)
+            raw_data = f.read()
+    except OSError:
+        return ""
+
+    if not raw_data:
+        return ""
+
+    consumed = len(raw_data)
+    if not raw_data.endswith(b"\n"):
+        last_nl = raw_data.rfind(b"\n")
+        tail = raw_data[last_nl + 1 :]
+        try:
+            json.loads(tail.decode("utf-8"))
+        except Exception:
+            if last_nl >= 0:
+                raw_data = raw_data[: last_nl + 1]
+                consumed = last_nl + 1
+            else:
+                return ""
+
+    if session_id:
+        _write_cursor(_cursor_path(session_id, transcript_path), read_start + consumed)
 
     lines = raw_data.decode("utf-8", errors="ignore").splitlines()
     messages: list[str] = []
@@ -170,11 +250,12 @@ def _harvest_is_due(session_id: str) -> bool:
         interval = 900.0
     if interval <= 0:
         return True
-    safe = "".join(ch for ch in str(session_id) if ch.isalnum() or ch in "_-")[:64]
     stamp = os.path.join(
-        os.path.expanduser("~/.local/state/local-optimize/hooks"),
-        f"harvest-{safe or 'default'}.stamp",
+        _state_hooks_dir(),
+        f"harvest-{_safe_session_key(session_id)}.stamp",
     )
+    if os.path.islink(stamp):
+        return True
     now = time.time()
     try:
         if os.path.isfile(stamp) and now - os.path.getmtime(stamp) < interval:
@@ -183,10 +264,11 @@ def _harvest_is_due(session_id: str) -> bool:
         return True
     try:
         _ensure_private_dir(os.path.dirname(stamp))
-        fd = os.open(stamp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        os.chmod(stamp, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(str(int(now)))
+        if not os.path.islink(stamp):
+            fd = os.open(stamp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            os.chmod(stamp, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(str(int(now)))
     except OSError:
         pass
     return True
@@ -212,7 +294,7 @@ def main() -> None:
     cwd = event.get("cwd", "")
     session_id = event.get("session_id", "")
 
-    recent_text = extract_recent_text(transcript_path)
+    recent_text = extract_recent_text(transcript_path, session_id=session_id)
     if not recent_text:
         sys.exit(0)
 
@@ -240,10 +322,13 @@ def main() -> None:
         sys.exit(0)
 
     try:
-        state_dir = os.path.expanduser("~/.local/state/local-optimize/hooks")
+        state_dir = _state_hooks_dir()
         _ensure_private_dir(state_dir)
         queue_path = os.path.join(state_dir, "harvest-queue.jsonl")
-        fd = os.open(queue_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        if os.path.islink(queue_path):
+            debug("Refusing to write harvest queue through symlink")
+            sys.exit(0)
+        fd = os.open(queue_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0), 0o600)
         os.chmod(queue_path, 0o600)
         with os.fdopen(fd, "a", encoding="utf-8") as f:
             for item in valid_candidates:

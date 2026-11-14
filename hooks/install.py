@@ -68,9 +68,12 @@ def is_ours(entry: dict) -> bool:
     """Recognize our own entries by path, not by position or by a comment.
 
     A marker comment would be lost the first time anything else rewrote the
-    file; the path is what actually makes the entry ours.
+    file; the path is what actually makes the entry ours. Never treat
+    Project-level Git guardrails (`deny_git.py`) as removable hook state.
     """
     command = str(entry.get("command") or "")
+    if "deny_git.py" in command:
+        return False
     return str(HOOKS_DIR) in command
 
 
@@ -113,7 +116,11 @@ def remove_event(settings: dict, event: str) -> int:
         if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
             surviving_groups.append(group)
             continue
-        kept = [e for e in group["hooks"] if not (isinstance(e, dict) and is_ours(e))]
+        kept = [
+            e
+            for e in group["hooks"]
+            if not (isinstance(e, dict) and "deny_git.py" not in str(e.get("command", "")) and is_ours(e))
+        ]
         removed += len(group["hooks"]) - len(kept)
         if kept:
             group["hooks"] = kept

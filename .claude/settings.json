@@ -3,11 +3,22 @@
     "deny": [
       "Bash(git:*)",
       "Bash(gh:*)",
+      "Bash(glab:*)",
+      "Bash(tig:*)",
+      "Bash(lazygit:*)",
       "Read(./.git/**)",
       "Edit(./.git/**)",
       "Write(./.git/**)",
+      "Read(.git/**)",
+      "Edit(.git/**)",
+      "Write(.git/**)",
+      "Glob(./.git/**)",
+      "Glob(.git/**)",
+      "Grep(./.git/**)",
+      "Grep(.git/**)",
       "mcp__git__*",
-      "mcp__github__*"
+      "mcp__github__*",
+      "mcp__gitlab__*"
     ],
     "disableBypassPermissionsMode": "disable"
   },

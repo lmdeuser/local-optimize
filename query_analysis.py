@@ -45,12 +45,9 @@ def retrieval_variants(query: str) -> list[str]:
 
 def query_facet(query: str) -> str | None:
     """Check the requested property independently of an attractive symbol name."""
-    identifiers = _IDENTIFIER.findall(query)
-    if not identifiers:
+    if not _IDENTIFIER.search(query):
         return None
-    remainder = query
-    for identifier in identifiers:
-        remainder = remainder.replace(identifier, " ")
+    remainder = _IDENTIFIER.sub(" ", query)
     compact = compact_query(remainder)
     neutral = _FILLER | frozenset("найти определение определения определению функции методов метод функцию explain describe definition find differ difference between from and or versus vs чем отличается отличаются разница между и или of у автора developer".split())
     meaningful = [w for w in re.findall(r"\w+", compact.casefold()) if w not in neutral]
@@ -60,8 +57,12 @@ def query_facet(query: str) -> str | None:
 def requests_secret_value(query: str) -> bool:
     """Source code can explain secret storage; it must not disclose actual credentials."""
     return bool(re.search(
-        r"\b(?:какой|назови|покажи|выдай)\s+(?:(?:секретный|текущий|действующий)\s+)?пароль\b"
-        r"|\b(?:actual|current|stored|secret)\s+(?:password|api[ _-]?key|access[ _-]?token)\b"
-        r"|\b(?:show|reveal|give)\s+(?:me\s+)?(?:the\s+)?(?:password|api[ _-]?key|access[ _-]?token)\b",
+        r"\b(?:какой|какая|какое|назови|покажи|выдай|скажи|раскрой|выведи)\s+"
+        r"(?:(?:секретный|текущий|действующий|реальный|записанный)\s+)?"
+        r"(?:пароль|токен|секрет(?:ный)?\s+ключ|ключ\s+доступа)\b"
+        r"|\b(?:actual|current|stored|real|raw|secret)\s+"
+        r"(?:password|passphrase|api[ _-]?key|access[ _-]?token|bearer[ _-]?token|db[ _-]?password|secret[ _-]?key|private[ _-]?key)\b"
+        r"|\b(?:show|reveal|give|print|tell|dump|display|extract)\s+(?:me\s+)?(?:the\s+)?"
+        r"(?:password|passphrase|api[ _-]?key|access[ _-]?token|bearer[ _-]?token|db[ _-]?password|secret[ _-]?key|private[ _-]?key)\b",
         query, re.IGNORECASE,
     ))

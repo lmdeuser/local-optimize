@@ -112,10 +112,16 @@ def test_archive_includes_agents_and_runtime_metadata_but_not_venv_or_models(
     root = tmp_path / "local_optimize"
     root.mkdir()
     (root / "AGENTS.md").write_text("# agents\n", encoding="utf-8")
+    packaging = root / "packaging"
+    packaging.mkdir()
+    (packaging / "runtime-policy.json").write_text("{}\n", encoding="utf-8")
     runtime = root / "runtime"
     runtime.mkdir()
-    for name in ("manifest.json", "requirements.lock", "split-manifest.json"):
-        (runtime / name).write_text("{}\n", encoding="utf-8")
+    (runtime / "requirements.lock").write_text("{}\n", encoding="utf-8")
+    for hidden_dir in (".agents", ".claude", "artifacts"):
+        d = root / hidden_dir
+        d.mkdir()
+        (d / "leak.txt").write_text("secret\n", encoding="utf-8")
     venv_python = runtime / "venv" / "bin" / "python"
     venv_python.parent.mkdir(parents=True)
     venv_python.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -130,9 +136,11 @@ def test_archive_includes_agents_and_runtime_metadata_but_not_venv_or_models(
 
     assert {
         "AGENTS.md",
-        "runtime/manifest.json",
+        "packaging/runtime-policy.json",
         "runtime/requirements.lock",
-        "runtime/split-manifest.json",
     } <= included
+    assert ".agents/leak.txt" not in included
+    assert ".claude/leak.txt" not in included
+    assert "artifacts/leak.txt" not in included
     assert "runtime/venv/bin/python" not in included
     assert "models/weights.bin" not in included

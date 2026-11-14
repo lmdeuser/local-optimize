@@ -20,4 +20,3 @@ Conduct authorized vulnerability assessments, lab security testing, and penetrat
 - **Controlled Probing**: Start with passive analysis. Request confirmation before executing active scanning.
 - **No Automated Mass Scanners**: Do NOT run aggressive automated scanners (`masscan`, `Responder`, `ffuf`) automatically.
 - **Audit Logging**: Maintain an exact record of all commands executed during the assessment.
-

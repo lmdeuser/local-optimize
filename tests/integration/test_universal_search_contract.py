@@ -53,8 +53,8 @@ def registry(tmp_path, monkeypatch):
     return value
 
 
-def run_search(registry, engine, context):
-    app.state.engine_factory = lambda: engine
+def run_search(registry, engine, context, monkeypatch):
+    monkeypatch.setattr(app.state, "engine_factory", lambda: engine, raising=False)
     app.dependency_overrides[get_rag_engine] = lambda: engine
     try:
         with TestClient(app) as client:
@@ -67,34 +67,39 @@ def run_search(registry, engine, context):
         app.dependency_overrides.clear()
 
 
-def test_http_resolves_client_working_directory_without_project(registry, tmp_path):
+def test_http_resolves_client_working_directory_without_project(registry, tmp_path, monkeypatch):
     engine = SearchEngine()
     response = run_search(registry, engine, {
         "working_directory": str(tmp_path / "second"),
         "read_scope": "shared",
-    })
+    }, monkeypatch)
     assert response.status_code == 200, response.text
     assert [call[0] for call in engine.calls] == ["second"]
     assert response.json()["results"][0]["project_id"] == "second"
 
 
-def test_http_accepts_unregistered_workspace(registry, tmp_path):
+def test_http_accepts_unregistered_workspace(registry, tmp_path, monkeypatch):
     workspace = tmp_path / "unregistered"
     workspace.mkdir()
     engine = SearchEngine()
-    response = run_search(registry, engine, {"working_directory": str(workspace), "read_scope": "shared"})
+    response = run_search(
+        registry,
+        engine,
+        {"working_directory": str(workspace), "read_scope": "shared"},
+        monkeypatch,
+    )
     assert response.status_code == 200, response.text
     assert engine.calls[0][0].startswith("ws:")
 
 
-def test_http_global_save_does_not_authorize_file_indexing(registry):
+def test_http_global_save_does_not_authorize_file_indexing(registry, monkeypatch):
     class Engine(SearchEngine):
         def save(self, context, **_kwargs):
             self.calls.append(context.project_id)
             return {"status": "success"}
 
     engine = Engine()
-    app.state.engine_factory = lambda: engine
+    monkeypatch.setattr(app.state, "engine_factory", lambda: engine, raising=False)
     app.dependency_overrides[get_rag_engine] = lambda: engine
     headers = {"X-Local-RAG-Session": "test-session-1234567890"}
     try:
@@ -108,12 +113,12 @@ def test_http_global_save_does_not_authorize_file_indexing(registry):
     assert indexed.status_code == 422
 
 
-def test_http_global_search_is_explicit_bounded_and_has_origins(registry):
+def test_http_global_search_is_explicit_bounded_and_has_origins(registry, monkeypatch):
     engine = SearchEngine()
     response = run_search(registry, engine, {
         "global_search": True,
         "read_scope": "shared",
-    })
+    }, monkeypatch)
     assert response.status_code == 200, response.text
     body = response.json()
     assert {call[0] for call in engine.calls} == {"first", "second", "memory", "unregistered"}
@@ -122,14 +127,14 @@ def test_http_global_search_is_explicit_bounded_and_has_origins(registry):
     assert len(body["results"]) <= 3
 
 
-def test_http_plain_search_defaults_to_global(registry):
+def test_http_plain_search_defaults_to_global(registry, monkeypatch):
     engine = SearchEngine()
-    response = run_search(registry, engine, {"read_scope": "shared"})
+    response = run_search(registry, engine, {"read_scope": "shared"}, monkeypatch)
     assert response.status_code == 200
     assert {call[0] for call in engine.calls} == {"first", "second", "memory", "unregistered"}
 
 
-def test_http_global_search_marks_failed_project_partial(registry):
+def test_http_global_search_marks_failed_project_partial(registry, monkeypatch):
     class PartialEngine(SearchEngine):
         def search(self, context, query, limit=5):
             if context.project_id == "second":
@@ -139,7 +144,7 @@ def test_http_global_search_marks_failed_project_partial(registry):
     response = run_search(registry, PartialEngine(), {
         "global_search": True,
         "read_scope": "shared",
-    })
+    }, monkeypatch)
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["status"] == "unavailable"
@@ -148,7 +153,7 @@ def test_http_global_search_marks_failed_project_partial(registry):
     assert body["omitted_project_ids"] == ["second"]
 
 
-def test_http_global_search_has_at_most_two_active_projects(registry):
+def test_http_global_search_has_at_most_two_active_projects(registry, monkeypatch):
     import threading
     import time
 
@@ -174,12 +179,12 @@ def test_http_global_search_has_at_most_two_active_projects(registry):
     response = run_search(registry, engine, {
         "global_search": True,
         "read_scope": "shared",
-    })
+    }, monkeypatch)
     assert response.status_code == 200, response.text
     assert engine.max_active <= 2
 
 
-def test_http_global_agentic_search_has_origins_and_global_limits(registry):
+def test_http_global_agentic_search_has_origins_and_global_limits(registry, monkeypatch):
     class AgenticEngine:
         _pool = object()
 
@@ -204,7 +209,7 @@ def test_http_global_agentic_search_has_origins_and_global_limits(registry):
         def close(self):
             return None
 
-    app.state.engine_factory = AgenticEngine
+    monkeypatch.setattr(app.state, "engine_factory", AgenticEngine, raising=False)
     app.dependency_overrides[get_rag_engine] = AgenticEngine
     try:
         with TestClient(app) as client:
@@ -230,7 +235,7 @@ def test_http_global_agentic_search_has_origins_and_global_limits(registry):
     assert {node["project_id"] for node in body["graph_context"]}
 
 
-def test_http_cwd_rejects_traversal_and_symlink_escape(registry, tmp_path):
+def test_http_cwd_rejects_traversal_and_symlink_escape(registry, tmp_path, monkeypatch):
     outside = tmp_path / "outside"
     outside.mkdir()
     link = tmp_path / "second" / "escape"
@@ -240,12 +245,12 @@ def test_http_cwd_rejects_traversal_and_symlink_escape(registry, tmp_path):
         response = run_search(registry, engine, {
             "working_directory": candidate,
             "read_scope": "shared",
-        })
+        }, monkeypatch)
         assert response.status_code == 403
         assert engine.calls == []
 
 
-def test_http_search_accepts_filesystem_project_context(registry, tmp_path):
+def test_http_search_accepts_filesystem_project_context(registry, tmp_path, monkeypatch):
     context = registry.resolve(
         project_id="first",
         root_id="primary",
@@ -255,6 +260,6 @@ def test_http_search_accepts_filesystem_project_context(registry, tmp_path):
         session_id="session-a",
     ).to_request_dict()
     engine = SearchEngine()
-    response = run_search(registry, engine, context)
+    response = run_search(registry, engine, context, monkeypatch)
     assert response.status_code == 200, response.text
     assert engine.calls[0][0] == "first"

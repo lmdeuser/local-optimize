@@ -60,6 +60,8 @@ if [ -n "${LOCAL_OPTIMIZE_VENV:-}" ]; then
     VENV=$LOCAL_OPTIMIZE_VENV
 elif [ -x "$APP_ROOT/venv/bin/python" ]; then
     VENV=$APP_ROOT/venv
+elif [ -x "$APP_ROOT/.venv/bin/python" ]; then
+    VENV=$APP_ROOT/.venv
 else
     VENV=${LOCAL_OPTIMIZE_SYSTEM_DIR:-/var/lib/local-optimize}/venv
 fi
@@ -86,5 +88,8 @@ esac
 
 export PYTHONPATH="$APP_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 export LOCAL_OPTIMIZE_CALLER_DIR="$PWD"
+export PYTHONDONTWRITEBYTECODE=1
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
 cd "$APP_ROOT"
 exec "$PYTHON" "$APP_ROOT/$script" "$@"

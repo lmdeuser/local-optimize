@@ -122,9 +122,11 @@ answering itself. Identifier-property checks include single-word properties.
 
 The watchdog supervisor reconciles only roots explicitly listed in the
 `WATCHDOG_PATHS` environment variable (colon-separated on Linux). An empty list
-leaves the service idle. It watches each selected root non-recursively; changes
-in nested directories are discovered by the periodic scan, normally every five
-minutes. One shared worker drains per-root
+leaves the service idle. By default it watches each selected root non-recursively;
+when `WATCHDOG_SUBDIRS` (`os.pathsep`-separated relative subdirectories) is set,
+it watches only those existing non-symlink subdirectories non-recursively instead of
+the root itself. Changes in nested directories are discovered by the periodic scan,
+normally every five minutes. One shared worker drains per-root
 queues (at most 500 pending paths each), with three attempts per event and up to
 10,000 directory or file entries per root per pass. Larger scans resume on subsequent passes; missing
 files are retired only after a scan completes. At most 64 roots are watched.

@@ -1,13 +1,17 @@
 [Unit]
 Description=Local Optimize filesystem indexer
-After=network.target postgresql.service gpu-rag-server.service
+After=network.target gpu-rag-server.service
+Wants=gpu-rag-server.service
 
 [Service]
 Type=simple
 WorkingDirectory=/usr/lib/local-optimize
 ExecStartPre=/usr/bin/test -f %h/.config/local-optimize/secrets.env
 EnvironmentFile=%h/.config/local-optimize/secrets.env
+EnvironmentFile=-%h/.config/local-optimize/watchdog.env
 Environment=PYTHONUNBUFFERED=1
+Environment=OMP_NUM_THREADS=1
+Environment=MKL_NUM_THREADS=1
 ExecStart=/usr/bin/local-optimize watchdog
 Restart=always
 RestartSec=5

@@ -4,6 +4,11 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 from mcp.server.fastmcp import FastMCP
 
@@ -20,11 +25,13 @@ async def search_local_rag(
     project_id: str = "",
     root_id: str = "",
     global_search: bool = False,
+    limit: int = 5,
 ) -> str:
     """Search local memory by client cwd, explicit project, or explicit global scope."""
+    safe_limit = max(1, min(int(limit), 20))
     return await _rag_search(
         query=query,
-        limit=5,
+        limit=safe_limit,
         include_metadata=True,
         verbosity="compact",
         max_content_chars=1800,

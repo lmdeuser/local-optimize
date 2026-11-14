@@ -9,7 +9,8 @@ Rules-Requires-Root: no
 
 Package: local-optimize
 Architecture: amd64
-Depends: ${misc:Depends}, ca-certificates, python3 (>= 3.14), python3 (<< 3.15), python3-venv, python3-pip, postgresql-18, postgresql-18-pgvector, libc6, libstdc++6, libgcc-s1, zlib1g
+Depends: ${misc:Depends}, ca-certificates, python3 (>= 3.14), python3 (<< 3.15), python3-venv, python3-pip, postgresql-18, postgresql-18-pgvector
+Recommends: intel-opencl-icd, libze1, ocl-icd-libopencl1
 Description: local-first MCP/RAG memory for AI agents
  Local Optimize provides scoped PostgreSQL/pgvector retrieval, GraphRAG,
  local Intel XPU reranking and local-only Ollama/MCP integration.

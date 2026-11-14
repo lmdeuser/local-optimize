@@ -104,3 +104,30 @@ def test_watchdog_limits_number_of_explicit_roots(tmp_path, caplog):
         assert "remaining paths are not watched" in caplog.text
     finally:
         supervisor.close()
+
+
+def test_watchdog_subdir_watches_schedules_only_named_subdirs(tmp_path, monkeypatch):
+    from pathlib import Path
+    import watchdog_indexer
+
+    root = tmp_path / "proj"
+    skills = root / "skills"
+    other = root / "other"
+    skills.mkdir(parents=True)
+    other.mkdir()
+    registry = ProjectRegistry([ProjectDefinition("proj", "Proj", {"primary": root})])
+    monkeypatch.setattr(watchdog_indexer, "get_project_registry", lambda _settings: registry)
+
+    supervisor = watchdog_indexer.WatchdogSupervisor(
+        watch_paths=[root],
+        subdir_watches=("skills",),
+    )
+    try:
+        supervisor.reconcile_registry()
+        handles = supervisor._subdir_watch_handles[("proj", "primary")]
+        assert len(handles) == 1
+        assert Path(handles[0].path).resolve() == skills.resolve()
+        assert Path(supervisor.watches[("proj", "primary")].path).resolve() != root.resolve()
+        assert not handles[0].is_recursive
+    finally:
+        supervisor.close()

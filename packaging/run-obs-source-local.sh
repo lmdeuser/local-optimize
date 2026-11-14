@@ -20,7 +20,7 @@ if gh release view "$tag" >/dev/null 2>&1; then
     echo "Release $tag already exists; refusing to overwrite published source assets" >&2
     exit 1
 fi
-WORK=$(mktemp -d "$ROOT/artifacts/obs-source.XXXXXX")
+WORK=$(mktemp -d "$TMPDIR/obs-source.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 
 python3 packaging/build_source_assets.py --output-dir "$WORK/dist"

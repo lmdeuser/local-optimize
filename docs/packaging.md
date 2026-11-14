@@ -2,7 +2,7 @@
 
 ## Что входит в пакет
 
-`local-optimize 1.0.1-0ubuntu6` для Ubuntu 26.04/amd64 устанавливает компактный пакет (~150 КБ без гигабайтных бинарных payload-архивов):
+`local-optimize 1.0.1-0ubuntu9` для Ubuntu 26.04/amd64 устанавливает компактный пакет (~150 КБ без гигабайтных бинарных payload-архивов):
 
 - приложение, `requirements.lock` и `packaging/runtime-policy.json` в `/usr/lib/local-optimize`;
 - CLI `/usr/bin/local-optimize`;
@@ -12,7 +12,8 @@
 
 - разворачивается общее Python 3.14/XPU-окружение в `/var/lib/local-optimize/venv` по `requirements.lock` (при неизменном `requirements.lock` при `apt upgrade` не переустанавливается);
 - скачиваются и обновляются по upstream-метаданным модели E5 и Qwen reranker в `/var/lib/local-optimize/models` (веса `multilingual-e5-small` защищены от тихой перезаписи без `--allow-embedding-update`);
-- проверяется и при необходимости обновляется `qwen2.5-coder:7b` в локальной службе Ollama (`127.0.0.1:11434`).
+- проверяется и при необходимости обновляется `qwen2.5-coder:7b` в локальной службе Ollama (`127.0.0.1:11434`);
+- при `apt upgrade` выполняются `systemctl --user daemon-reload` и `try-restart` для уже активных пользовательских служб, а `gpu-rag-server.service` запускает `local-optimize migrate` в `ExecStartPre`.
 
 Автономного фонового `systemd`-таймера автообновления моделей нет: проверка и обновление выполняются только при `apt install`/`apt upgrade` или явном вызове `sudo local-optimize sync`. При отсутствии сети и наличии валидной локальной копии сохраняются текущие локальные модели; если модель или `venv` отсутствуют и не могут быть получены, установка завершается ошибкой (`postinst` требует полный рабочий runtime).
 
@@ -33,7 +34,7 @@
 После скачивания готового пакета, собранного OBS со статусом `succeeded`, администратор может установить его:
 
 ```bash
-sudo apt install ./artifacts/debian/local-optimize_1.0.1-0ubuntu6_amd64.deb
+sudo apt install ./artifacts/debian/local-optimize_1.0.1-0ubuntu9_amd64.deb
 ```
 
 Затем настройте секреты и реестр проектов по `/usr/share/doc/local-optimize/docs/installation.md`, выполните `local-optimize migrate`, проверьте health и только после этого включите user services. Не создавайте отдельное окружение в `~/.local/share/local-optimize/venv`: CLI использует `/var/lib/local-optimize/venv`. `local-optimize index` сохраняет каталог вызова через `LOCAL_OPTIMIZE_CALLER_DIR`; при необходимости явный контекст можно задать через `--working-directory`.

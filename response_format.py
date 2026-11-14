@@ -50,7 +50,14 @@ DEFAULT_VERBOSITY = os.getenv("RAG_RESPONSE_VERBOSITY", VERBOSITY_COMPACT).strip
 #: Per-hit content ceiling. 0 disables truncation. A chunk is already bounded by
 #: the indexer's chunk size, so this exists for the caller who wants a tighter
 #: budget than the indexer's, not as a safety net.
-DEFAULT_MAX_CONTENT_CHARS = max(0, int(os.getenv("RAG_MAX_CONTENT_CHARS", "500")))
+def _default_max_content_chars() -> int:
+    try:
+        return max(0, int(os.getenv("RAG_MAX_CONTENT_CHARS", "500")))
+    except ValueError:
+        return 500
+
+
+DEFAULT_MAX_CONTENT_CHARS = _default_max_content_chars()
 
 TRUNCATION_MARKER = "…[truncated]"
 
@@ -142,7 +149,11 @@ def _dedupe(hits: list[dict]) -> list[dict]:
     seen: set[str] = set()
     unique = []
     for hit in hits:
-        marker = str(hit.get("content_hash") or hit.get("chunk_id") or id(hit))
+        marker = hit.get("content_hash")
+        if marker is None:
+            chunk_id = hit.get("chunk_id")
+            marker = f"id:{chunk_id}" if chunk_id is not None else f"obj:{id(hit)}"
+        marker = str(marker)
         if marker in seen:
             continue
         seen.add(marker)
@@ -164,14 +175,17 @@ def compact_search_response(
     verbosity = normalize_verbosity(verbosity)
     if verbosity == VERBOSITY_FULL or not isinstance(response, dict):
         return response
-    if response.get("status") != "success":
+    status = response.get("status")
+    if status != "success" and not (
+        status == "unavailable" and isinstance(response.get("results"), list)
+    ):
         return response
 
     hits = response.get("results")
     hits = _dedupe(hits) if isinstance(hits, list) else []
 
     compact: dict[str, Any] = {
-        "status": "success",
+        "status": status,
         "top_score": response.get("top_score"),
     }
     coverage = response.get("evidence_coverage")

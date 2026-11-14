@@ -16,6 +16,18 @@ from typing import Callable, Iterable
 from atomic_files import atomic_write_bytes
 
 
+def _assert_no_symlink_components(path: Path) -> None:
+    candidate = path.expanduser()
+    check = candidate
+    while True:
+        if check.is_symlink():
+            raise RuntimeError(f"Symlink path component is not permitted: {check}")
+        parent = check.parent
+        if parent == check:
+            break
+        check = parent
+
+
 def file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -65,6 +77,7 @@ class InstallationContext:
         absent_targets: list[dict[str, str]] = []
         seen: set[Path] = set()
         for index, managed in enumerate(self.targets):
+            _assert_no_symlink_components(managed.path)
             target = managed.path.expanduser().resolve(strict=False)
             if target in seen:
                 continue
@@ -137,6 +150,7 @@ class InstallationContext:
             self.verify_backup()
 
     def restore_target(self, path: Path) -> None:
+        _assert_no_symlink_components(path)
         target = path.expanduser().resolve(strict=False)
         record = self.records.get(target)
         if record is None:
@@ -165,6 +179,7 @@ def deduplicate_targets(targets: Iterable[ManagedTarget]) -> tuple[ManagedTarget
     result: list[ManagedTarget] = []
     seen: set[Path] = set()
     for item in targets:
+        _assert_no_symlink_components(item.path)
         path = item.path.expanduser().resolve(strict=False)
         if path not in seen:
             seen.add(path)

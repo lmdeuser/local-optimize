@@ -202,6 +202,5 @@ These are hard constraints. If you catch yourself doing any of these, stop and r
 
 Output production-ready code conforming to the GLOBAL CODE QUALITY ENFORCEMENT rules.
 
-
 > [!SECURITY]
 > NEVER execute `sudo` commands automatically without explicit user authorization.

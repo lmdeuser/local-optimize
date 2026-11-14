@@ -73,7 +73,7 @@ class CapturingEngine:
         return {"status": "success", "chunk_id": 1}
 
 
-def test_http_agentic_search_forwards_engine_hits_to_results(registry):
+def test_http_agentic_search_forwards_engine_hits_to_results(registry, monkeypatch):
     """The HTTP layer must read the engine's own "results" key.
 
     It previously consumed a non-existent "vector_hits" key, so every hit was
@@ -93,7 +93,12 @@ def test_http_agentic_search_forwards_engine_hits_to_results(registry):
             }
 
     engine = AgenticEngine()
-    app.state.engine_factory = lambda: (_ for _ in ()).throw(RuntimeError("fixture"))
+    monkeypatch.setattr(
+        app.state,
+        "engine_factory",
+        lambda: (_ for _ in ()).throw(RuntimeError("fixture")),
+        raising=False,
+    )
     app.dependency_overrides[get_rag_engine] = lambda: engine
     try:
         with TestClient(app) as client:
@@ -114,9 +119,14 @@ def test_http_agentic_search_forwards_engine_hits_to_results(registry):
         app.dependency_overrides.clear()
 
 
-def test_http_search_passes_server_authorized_context_to_engine(registry):
+def test_http_search_passes_server_authorized_context_to_engine(registry, monkeypatch):
     engine = CapturingEngine()
-    app.state.engine_factory = lambda: (_ for _ in ()).throw(RuntimeError("fixture"))
+    monkeypatch.setattr(
+        app.state,
+        "engine_factory",
+        lambda: (_ for _ in ()).throw(RuntimeError("fixture")),
+        raising=False,
+    )
     app.dependency_overrides[get_rag_engine] = lambda: engine
     try:
         with TestClient(app) as client:
@@ -136,14 +146,19 @@ def test_http_search_passes_server_authorized_context_to_engine(registry):
         app.dependency_overrides.clear()
 
 
-def test_http_backend_error_status_is_503(registry):
+def test_http_backend_error_status_is_503(registry, monkeypatch):
     class ErrorEngine:
         _pool = object()
 
         def search(self, **_kwargs):
             return {"status": "error", "results": []}
 
-    app.state.engine_factory = lambda: (_ for _ in ()).throw(RuntimeError("fixture"))
+    monkeypatch.setattr(
+        app.state,
+        "engine_factory",
+        lambda: (_ for _ in ()).throw(RuntimeError("fixture")),
+        raising=False,
+    )
     app.dependency_overrides[get_rag_engine] = ErrorEngine
     try:
         with TestClient(app) as client:
@@ -158,12 +173,17 @@ def test_http_backend_error_status_is_503(registry):
         app.dependency_overrides.clear()
 
 
-def test_http_agentic_response_uses_canonical_results(registry):
+def test_http_agentic_response_uses_canonical_results(registry, monkeypatch):
     class AgenticEngine:
         def agentic_search(self, **_kwargs):
             return {"status": "success", "vector_hits": [], "entities": [], "relations": []}
 
-    app.state.engine_factory = lambda: (_ for _ in ()).throw(RuntimeError("fixture"))
+    monkeypatch.setattr(
+        app.state,
+        "engine_factory",
+        lambda: (_ for _ in ()).throw(RuntimeError("fixture")),
+        raising=False,
+    )
     app.dependency_overrides[get_rag_engine] = AgenticEngine
     try:
         with TestClient(app) as client:
@@ -179,11 +199,16 @@ def test_http_agentic_response_uses_canonical_results(registry):
         app.dependency_overrides.clear()
 
 
-def test_http_requires_registry_fingerprint(registry):
+def test_http_requires_registry_fingerprint(registry, monkeypatch):
     engine = CapturingEngine()
     payload = knowledge_context_payload(registry)
     payload.pop("registry_fingerprint")
-    app.state.engine_factory = lambda: (_ for _ in ()).throw(RuntimeError("fixture"))
+    monkeypatch.setattr(
+        app.state,
+        "engine_factory",
+        lambda: (_ for _ in ()).throw(RuntimeError("fixture")),
+        raising=False,
+    )
     app.dependency_overrides[get_rag_engine] = lambda: engine
     try:
         with TestClient(app) as client:
@@ -196,9 +221,14 @@ def test_http_requires_registry_fingerprint(registry):
         app.dependency_overrides.clear()
 
 
-def test_http_rejects_visibility_validation_confusion_before_engine(registry):
+def test_http_rejects_visibility_validation_confusion_before_engine(registry, monkeypatch):
     engine = CapturingEngine()
-    app.state.engine_factory = lambda: (_ for _ in ()).throw(RuntimeError("fixture"))
+    monkeypatch.setattr(
+        app.state,
+        "engine_factory",
+        lambda: (_ for _ in ()).throw(RuntimeError("fixture")),
+        raising=False,
+    )
     app.dependency_overrides[get_rag_engine] = lambda: engine
     try:
         with TestClient(app) as client:
@@ -214,9 +244,14 @@ def test_http_rejects_visibility_validation_confusion_before_engine(registry):
         app.dependency_overrides.clear()
 
 
-def test_http_rejects_client_controlled_root_before_engine(registry):
+def test_http_rejects_client_controlled_root_before_engine(registry, monkeypatch):
     engine = CapturingEngine()
-    app.state.engine_factory = lambda: (_ for _ in ()).throw(RuntimeError("fixture"))
+    monkeypatch.setattr(
+        app.state,
+        "engine_factory",
+        lambda: (_ for _ in ()).throw(RuntimeError("fixture")),
+        raising=False,
+    )
     app.dependency_overrides[get_rag_engine] = lambda: engine
     try:
         with TestClient(app, raise_server_exceptions=False) as client:

@@ -135,3 +135,62 @@ def test_public_cloud_configuration_remains_blocked(tmp_path):
     with pytest.raises(RuntimeError, match="cloud-capable"):
         generator.build_cursor_mcp_config(target_path=path)
     assert path.read_text() == original
+
+
+def test_lmstudio_config_writes_readonly_wrapper_and_preserves_other_servers(tmp_path):
+    path = tmp_path / "lmstudio" / "mcp.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(_opaque_config()))
+
+    result = generator.build_lmstudio_mcp_config(target_path=path)
+
+    saved = json.loads(path.read_text())
+    assert result["mcpServers"][generator.CANONICAL_SERVER_NAME]["args"] == [
+        generator.LMSTUDIO_MCP_SCRIPT
+    ]
+    assert saved["mcpServers"]["third-party"] == _opaque_config()["mcpServers"]["third-party"]
+    assert saved["topLevel"] == _opaque_config()["topLevel"]
+
+
+def test_prune_cloud_client_configs_removes_only_owned_entries(tmp_path):
+    owned_path = tmp_path / "cursor" / "mcp.json"
+    owned_path.parent.mkdir(parents=True)
+    owned_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    generator.CANONICAL_SERVER_NAME: {
+                        "command": generator.PYTHON_EXEC,
+                        "args": [generator.MCP_SERVER_SCRIPT],
+                    },
+                    generator.LEGACY_SERVER_NAME: {
+                        "command": generator.PYTHON_EXEC,
+                        "args": [generator.LMSTUDIO_MCP_SCRIPT],
+                    },
+                    "third-party": {"command": "node", "args": ["other.js"]},
+                }
+            }
+        )
+    )
+    unowned_path = tmp_path / "gemini" / "mcp.json"
+    unowned_path.parent.mkdir(parents=True)
+    unowned_raw = json.dumps(
+        {
+            "mcpServers": {
+                generator.CANONICAL_SERVER_NAME: {
+                    "command": "node",
+                    "args": ["/opt/foreign/server.js"],
+                }
+            }
+        }
+    )
+    unowned_path.write_text(unowned_raw)
+
+    pruned = generator.prune_cloud_client_configs(paths=[owned_path, unowned_path])
+
+    assert pruned == {
+        str(owned_path): [generator.CANONICAL_SERVER_NAME, generator.LEGACY_SERVER_NAME]
+    }
+    owned_saved = json.loads(owned_path.read_text())
+    assert set(owned_saved["mcpServers"]) == {"third-party"}
+    assert unowned_path.read_text() == unowned_raw

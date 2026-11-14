@@ -40,6 +40,10 @@ apply migrations and check the server, then enable them for the intended user:
   local-optimize migrate
   systemctl --user enable --now gpu-rag-server.service watchdog-indexer.service
 
+On startup, gpu-rag-server.service also runs "local-optimize migrate" via
+ExecStartPre, and apt upgrades automatically reload systemd --user and
+try-restart already active user services.
+
 Verify /liveness, /readiness and /runtime before registering local-only agents.
 Cloud-capable clients must not receive direct RAG MCP access. Existing allowed
 agent entries should use /usr/bin/local-optimize mcp (or lmstudio-mcp for the

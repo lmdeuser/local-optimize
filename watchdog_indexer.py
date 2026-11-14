@@ -144,10 +144,21 @@ class DebouncedIndexer:
                 )
                 if source_allowed and destination_indexable:
                     result = self.client.move_document(str(path), str(destination), context=self.context)
-                    return result.get("status") == "success" and result.get("moved_count", 0) > 0
+                    if result.get("status") == "success" and result.get("moved_count", 0) > 0:
+                        return True
+                    error_code = (result.get("error") or {}).get("code") if isinstance(result.get("error"), dict) else None
+                    if (
+                        result.get("status") == "not_found"
+                        or error_code == "MOVE_NOT_APPLIED"
+                        or result.get("message") == "HTTP 409"
+                    ):
+                        return self._process_now("modify", str(destination))
+                    return False
                 if source_allowed:
                     result = self.client.delete_document(str(path), context=self.context)
                     return result.get("status") == "success"
+                if destination_indexable:
+                    return self._process_now("modify", str(destination))
                 return False
         except Exception as exc:
             logger.warning("Watchdog processing error action=%s type=%s", action, type(exc).__name__)
@@ -187,15 +198,20 @@ class CodebaseChangeHandler(FileSystemEventHandler):
 
 
 class WatchdogSupervisor:
-    def __init__(self, *, reconcile_interval: float = 300.0, watch_paths=()):
+    def __init__(self, *, reconcile_interval: float = 300.0, watch_paths=(), subdir_watches=()):
         self.reconcile_interval = reconcile_interval
         paths = sorted({workspace_definition(path).roots["workspace"] for path in watch_paths})
         if len(paths) > MAX_WATCH_ROOTS:
             logger.warning("Only %d watch roots are allowed; remaining paths are not watched", MAX_WATCH_ROOTS)
         self.watch_paths = set(paths[:MAX_WATCH_ROOTS])
+        raw_subdirs = subdir_watches or [
+            part.strip() for part in os.getenv("WATCHDOG_SUBDIRS", "").split(os.pathsep) if part.strip()
+        ]
+        self.subdir_watches: tuple[str, ...] = tuple(raw_subdirs)
         self.observer = Observer()
         self.indexers: dict[tuple[str, str], DebouncedIndexer] = {}
         self.watches: dict[tuple[str, str], object] = {}
+        self._subdir_watch_handles: dict[tuple[str, str], list[object]] = {}
         self._stop = threading.Event()
         self._worker: threading.Thread | None = None
         self._started = False
@@ -205,6 +221,11 @@ class WatchdogSupervisor:
         if watch is not None:
             try:
                 self.observer.unschedule(watch)
+            except (KeyError, ValueError):
+                pass
+        for subwatch in self._subdir_watch_handles.pop(key, ()):
+            try:
+                self.observer.unschedule(subwatch)
             except (KeyError, ValueError):
                 pass
         indexer = self.indexers.pop(key, None)
@@ -243,10 +264,53 @@ class WatchdogSupervisor:
                 continue
             indexer = DebouncedIndexer(context=context, registry=registry)
             self.indexers[key] = indexer
-            self.watches[key] = self.observer.schedule(
-                CodebaseChangeHandler(indexer), path=context.project_root, recursive=False,
-                event_filter=WATCH_EVENTS,
-            )
+            handler = CodebaseChangeHandler(indexer)
+            scheduled_subdirs: list[object] = []
+            if self.subdir_watches:
+                root_path = Path(context.project_root)
+                for rel_sub in self.subdir_watches:
+                    if ".." in Path(rel_sub).parts:
+                        continue
+                    raw_candidate = root_path / rel_sub if rel_sub != "." else root_path
+                    cur_check = raw_candidate
+                    has_symlink = False
+                    while cur_check != root_path and cur_check != cur_check.parent:
+                        if cur_check.is_symlink():
+                            has_symlink = True
+                            break
+                        cur_check = cur_check.parent
+                    if has_symlink:
+                        continue
+                    candidate = raw_candidate.resolve()
+                    if not candidate.exists() or not candidate.is_dir():
+                        continue
+                    try:
+                        rel_path = candidate.relative_to(root_path)
+                    except ValueError:
+                        continue
+                    if rel_path != Path(".") and (
+                        any(part in IGNORE_DIRS or part.startswith(".") for part in rel_path.parts)
+                        or not registry.owns_context_path(context, candidate)
+                    ):
+                        continue
+                    scheduled_subdirs.append(
+                        self.observer.schedule(
+                            handler,
+                            path=str(candidate),
+                            recursive=False,
+                            event_filter=WATCH_EVENTS,
+                        )
+                    )
+            if scheduled_subdirs:
+                self._subdir_watch_handles[key] = scheduled_subdirs
+                self.watches[key] = scheduled_subdirs[0]
+            else:
+                self.watches[key] = self.observer.schedule(
+                    handler,
+                    path=context.project_root,
+                    recursive=False,
+                    event_filter=WATCH_EVENTS,
+                )
             indexer.queue.reconcile()
 
     def _work(self) -> None:

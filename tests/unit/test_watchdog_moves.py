@@ -127,3 +127,49 @@ def test_delete_after_recursive_directory_removal_is_processed(tmp_path):
 
     assert indexer._process_now("delete", str(deleted)) is True
     assert client.calls == [("delete", str(deleted), "project-a")]
+
+
+def test_move_not_applied_falls_back_to_modify_index(tmp_path):
+    old_path = tmp_path / "old.py"
+    new_path = tmp_path / "new.py"
+    new_path.write_text("print('moved')\n", encoding="utf-8")
+    client = FakeClient(move_result={"status": "not_found", "moved_count": 0})
+    indexer = make_indexer(tmp_path, client)
+
+    assert indexer._process_now("move", str(old_path), str(new_path)) is True
+    assert client.calls == [
+        ("move", str(old_path), str(new_path), "project-a"),
+        ("index_code", str(new_path), "project-a"),
+    ]
+
+    conflict_client = FakeClient(
+        move_result={"status": "error", "message": "HTTP 409"}
+    )
+    conflict_indexer = make_indexer(tmp_path, conflict_client)
+    assert conflict_indexer._process_now("move", str(old_path), str(new_path)) is True
+    assert conflict_client.calls == [
+        ("move", str(old_path), str(new_path), "project-a"),
+        ("index_code", str(new_path), "project-a"),
+    ]
+
+
+def test_move_from_unallowed_source_into_indexable_destination_indexes_destination(tmp_path):
+    root_a = tmp_path / "proj"
+    outside_dir = tmp_path / "outside"
+    root_a.mkdir()
+    outside_dir.mkdir()
+    (root_a / ".venv").mkdir()
+    arrived = root_a / "arrived.py"
+    arrived.write_text("print('arrived')\n", encoding="utf-8")
+
+    client = FakeClient()
+    indexer = make_indexer(root_a, client)
+
+    assert indexer._process_now("move", str(outside_dir / "staged.py"), str(arrived)) is True
+    assert client.calls == [("index_code", str(arrived), "project-a")]
+    assert not any(call[0] == "delete" for call in client.calls)
+
+    queued = indexer.trigger("move", str(root_a / ".venv" / "x.py"), dest_path=str(arrived))
+    assert queued is True
+    assert set(indexer.queue.pending) == {str(arrived)}
+    assert indexer.queue.pending[str(arrived)][1] == "modify"

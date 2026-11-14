@@ -31,7 +31,18 @@ def build_assets(output: Path) -> None:
             if not raw:
                 continue
             relative = Path(os.fsdecode(raw))
-            if relative.parts[0] in {".github", "artifacts", "debian", "models"}:
+            if relative.parts[0] in {
+                ".github",
+                ".claude",
+                ".agents",
+                "artifacts",
+                "backup",
+                "backups",
+                "debian",
+                "investigation",
+                "models",
+                "node_modules",
+            }:
                 continue
             source = Path(relative)
             destination = root / relative
@@ -60,7 +71,7 @@ def build_assets(output: Path) -> None:
         elif line.startswith(" "):
             old_name = line.rsplit(" ", 1)[-1]
             kind = None
-            if old_name == f"{package}_{upstream}.orig.tar.gz":
+            if old_name.startswith(f"{package}_") and old_name.endswith(".orig.tar.gz"):
                 kind = "orig"
             elif old_name.startswith(f"{package}_") and old_name.endswith(".debian.tar.xz"):
                 kind = "debian"

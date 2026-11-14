@@ -1,13 +1,17 @@
 [Unit]
 Description=Local Optimize RAG server
-After=network.target postgresql.service
+After=network.target
 
 [Service]
 Type=simple
 WorkingDirectory=/usr/lib/local-optimize
 ExecStartPre=/usr/bin/test -f %h/.config/local-optimize/secrets.env
+ExecStartPre=/usr/bin/local-optimize migrate
 EnvironmentFile=%h/.config/local-optimize/secrets.env
 Environment=PYTHONUNBUFFERED=1
+Environment=OMP_NUM_THREADS=1
+Environment=MKL_NUM_THREADS=1
+Environment=TOKENIZERS_PARALLELISM=false
 ExecStart=/usr/bin/local-optimize server
 Restart=always
 RestartSec=5

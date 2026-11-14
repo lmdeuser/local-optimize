@@ -472,6 +472,11 @@ class AdaptiveModelRouter:
                         "architecture": "Local-First Hybrid Inference (Cascaded Escalation)",
                     }
 
+                bracket_tags = re.findall(r"\[([^\[\]\n]{1,80})\]", answer)
+                malformed_tags = [
+                    tag for tag in bracket_tags
+                    if not re.fullmatch(r"Evidence\s+\d+", tag.strip(), flags=re.IGNORECASE)
+                ]
                 citation_refs = sorted({
                     int(match)
                     for match in re.findall(
@@ -485,7 +490,9 @@ class AdaptiveModelRouter:
                 unknown_ids = sorted(set(cited_ids) - evidence_ids)
                 secondary_ids = sorted(set(cited_ids) - primary_source_ids)
                 citation_reason = None
-                if has_structured_evidence and not cited_ids:
+                if has_structured_evidence and malformed_tags:
+                    citation_reason = "malformed_citation"
+                elif has_structured_evidence and not cited_ids:
                     citation_reason = (
                         "malformed_citation" if citation_refs else "missing_citation"
                     )

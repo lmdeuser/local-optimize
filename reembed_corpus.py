@@ -42,8 +42,9 @@ def pending_count(cur) -> int:
         "SELECT count(*) FROM public.project_knowledge "
         "WHERE content IS NOT NULL "
         "  AND (embedding IS NULL OR embedding_model IS DISTINCT FROM %s "
+        "       OR embedding_version IS DISTINCT FROM %s "
         "       OR embedding_dimension IS DISTINCT FROM %s)",
-        (EMBEDDING_MODEL_NAME, EMBEDDING_DIM),
+        (EMBEDDING_MODEL_NAME, EMBEDDING_VERSION, EMBEDDING_DIM),
     )
     return int(cur.fetchone()[0])
 
@@ -84,47 +85,74 @@ def main() -> int:
         engine = RagEngine()
         started = time.time()
         done = 0
-        while True:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT id, content FROM public.project_knowledge "
-                    "WHERE content IS NOT NULL "
-                    "  AND (embedding IS NULL OR embedding_model IS DISTINCT FROM %s "
-                    "       OR embedding_dimension IS DISTINCT FROM %s) "
-                    "ORDER BY id LIMIT %s",
-                    (EMBEDDING_MODEL_NAME, EMBEDDING_DIM, args.batch_size),
-                )
-                rows = cur.fetchall()
-            if not rows:
-                break
+        affected_projects: set[str] = set()
+        try:
+            while True:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT id, project_id, content FROM public.project_knowledge "
+                        "WHERE content IS NOT NULL "
+                        "  AND (embedding IS NULL OR embedding_model IS DISTINCT FROM %s "
+                        "       OR embedding_version IS DISTINCT FROM %s "
+                        "       OR embedding_dimension IS DISTINCT FROM %s) "
+                        "ORDER BY id LIMIT %s",
+                        (EMBEDDING_MODEL_NAME, EMBEDDING_VERSION, EMBEDDING_DIM, args.batch_size),
+                    )
+                    rows = cur.fetchall()
+                if not rows:
+                    break
 
-            updates = []
-            for chunk_id, content in rows:
-                vector = engine.encode(content, kind="passage").tolist()
-                if len(vector) != EMBEDDING_DIM:
-                    print(f"\nABORT: model produced {len(vector)} dims, expected "
-                          f"{EMBEDDING_DIM}. The vector column would reject this.",
-                          file=sys.stderr)
-                    return 3
-                updates.append((vector, EMBEDDING_MODEL_NAME, EMBEDDING_VERSION,
-                                EMBEDDING_DIM, chunk_id))
+                updates = []
+                for chunk_id, project_id, content in rows:
+                    vector = engine.encode(content, kind="passage").tolist()
+                    if len(vector) != EMBEDDING_DIM:
+                        print(f"\nABORT: model produced {len(vector)} dims, expected "
+                              f"{EMBEDDING_DIM}. The vector column would reject this.",
+                              file=sys.stderr)
+                        return 3
+                    updates.append((vector, EMBEDDING_MODEL_NAME, EMBEDDING_VERSION,
+                                    EMBEDDING_DIM, chunk_id))
+                    if project_id:
+                        affected_projects.add(project_id)
 
+                with conn.cursor() as cur:
+                    execute_batch(
+                        cur,
+                        "UPDATE public.project_knowledge "
+                        "SET embedding = %s::vector, embedding_model = %s, "
+                        "    embedding_version = %s, embedding_dimension = %s "
+                        "WHERE id = %s",
+                        updates,
+                    )
+                conn.commit()
+                done += len(rows)
+                rate = done / max(1e-6, time.time() - started)
+                print(f"\r  {done}/{total} rows  ({rate:.1f}/s)", end="", flush=True)
+
+            print()
+        finally:
+            engine.close()
+
+        if done > 0:
             with conn.cursor() as cur:
-                execute_batch(
-                    cur,
-                    "UPDATE public.project_knowledge "
-                    "SET embedding = %s::vector, embedding_model = %s, "
-                    "    embedding_version = %s, embedding_dimension = %s "
-                    "WHERE id = %s",
-                    updates,
-                )
+                cur.execute("SELECT to_regclass('public.rag_query_cache')")
+                if cur.fetchone()[0]:
+                    cur.execute("DELETE FROM public.rag_query_cache")
+                cur.execute("SELECT to_regclass('public.rag_local_answer_cache')")
+                if cur.fetchone()[0]:
+                    cur.execute("DELETE FROM public.rag_local_answer_cache")
+                cur.execute("SELECT to_regclass('public.rag_cache_generation')")
+                if cur.fetchone()[0]:
+                    for project_id in sorted(affected_projects):
+                        cur.execute(
+                            "INSERT INTO public.rag_cache_generation (project_id, generation, updated_at) "
+                            "VALUES (%s, 1, now()) "
+                            "ON CONFLICT (project_id) DO UPDATE "
+                            "SET generation = public.rag_cache_generation.generation + 1, "
+                            "    updated_at = now()",
+                            (project_id,),
+                        )
             conn.commit()
-            done += len(rows)
-            rate = done / max(1e-6, time.time() - started)
-            print(f"\r  {done}/{total} rows  ({rate:.1f}/s)", end="", flush=True)
-
-        print()
-        engine.close()
 
         with conn.cursor() as cur:
             remaining = pending_count(cur)

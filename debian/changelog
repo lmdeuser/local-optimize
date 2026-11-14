@@ -1,3 +1,12 @@
+local-optimize (1.0.1-0ubuntu9) resolute; urgency=medium
+
+  * Enforce strict root_id and owner scoping across schema v16, GraphRAG, and caches.
+  * Propagate validated X-Local-RAG-Agent context and fix WATCHDOG_SUBDIRS reconciliation.
+  * Harden hooks, installer symlink checks, runtime sync, and backup scripts.
+  * Run database migrations in gpu-rag-server ExecStartPre and try-restart active user services on upgrade.
+
+ -- Local Optimize contributors <28979718+lmdeuser@users.noreply.github.com>  Sun, 15 Nov 2026 01:24:06 +0500
+
 local-optimize (1.0.1-0ubuntu8) resolute; urgency=medium
 
   * Store indexer state outside watched roots and read legacy state safely.

@@ -48,10 +48,14 @@ class IndexQueue:
         legacy_path = self.root / ".rag-index-state.json"
         read_path = self.state_path if self.state_path.exists() else legacy_path
         self.confirmed = {}
-        if read_path.is_file() and not read_path.is_symlink():
+        if read_path.exists():
+            if read_path.is_symlink() or not read_path.is_file():
+                raise ValueError("Indexer state path must be a regular non-symlink file")
             if read_path.stat().st_size <= 2_000_000:
                 try:
-                    data = json.loads(read_path.read_text())
+                    fd = os.open(read_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                    with os.fdopen(fd, "r", encoding="utf-8") as stream:
+                        data = json.load(stream)
                     if data.get("version") == 1 and data.get("root") == str(self.root):
                         self.confirmed = {key: value for key, value in data.get("files", {}).items()
                                           if self._allowed(key)}
@@ -164,11 +168,14 @@ class IndexQueue:
                     updated[path] = before
                 payload = json.dumps({"version": 1, "root": str(self.root), "files": updated})
             temporary = self.state_path.with_suffix(".pending")
+            if self.state_path.is_symlink() or temporary.is_symlink():
+                raise ValueError("Indexer state path must not be a symlink")
             self.state_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, "w") as stream:
                 stream.write(payload)
             os.replace(temporary, self.state_path)
+            os.chmod(self.state_path, 0o600)
             with self.condition:
                 self.confirmed = updated
             if action == "move" and destination:

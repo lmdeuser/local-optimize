@@ -11,12 +11,12 @@ Memory is backed by a centralized PostgreSQL 18 database (`aiagent`) managed by 
 ### Data Flow
 1. **Query RAG**: Agent calls `rag_search(query)` or `rag_agentic_search(query)`.
 2. **Score Evaluation**:
-   - `top_score >= 0.65`: **Context Sufficient**. Local Qwen model or immediate RAG response is used (`rag_answer`).
-   - `top_score < 0.65`: **Escalation Required**. Return a routing signal only. Never attach RAG chunks, citations, metadata, scores, summaries, or derived facts to a cloud request.
-   - The cut is one setting (`RAG_RELEVANCE_FLOOR`) shared by the engine, the HTTP
-     `route` decision and the escalation router — measured, not chosen. At 0.65 it
-     keeps 92.5% of answerable queries and admits none of the unanswerable ones.
-     Do not move it without re-running the calibration probe; see
+   - `top_score >= 0.50` (`RAG_RELEVANCE_FLOOR`): **Context Sufficient**. Local Qwen model or immediate RAG response is used (`rag_answer`).
+   - `top_score < 0.50`: **Escalation Required**. Return a routing signal only. Never attach RAG chunks, citations, metadata, scores, summaries, or derived facts to a cloud request.
+   - The cut is one setting (`RAG_RELEVANCE_FLOOR`, calibrated in
+     `retrieval_policy.json` at `0.50` with identifier-property gate `0.05`) shared by
+     the engine, the HTTP `route` decision, and the escalation router — measured via
+     the positive and adversarial evaluation set, not chosen ad hoc; see
      `docs/score-calibration.md`.
 3. **Session Context Delta**:
    - The memory server tracks hashes (`content_hash`) per `agent_id` and `session_id`.

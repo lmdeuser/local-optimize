@@ -125,9 +125,20 @@ def test_migrations_on_truly_fresh_database(tmp_path):
                 "SELECT indexname FROM pg_indexes "
                 "WHERE schemaname = 'public' AND tablename = 'project_knowledge'"
             )
-            assert "project_knowledge_dedup_key_unique" in {row[0] for row in cursor.fetchall()}
+            pk_indexes = {row[0] for row in cursor.fetchall()}
+            assert "project_knowledge_dedup_key_unique" in pk_indexes
+            assert "project_knowledge_project_root_file_idx" in pk_indexes
+
+            cursor.execute(
+                "SELECT indexname FROM pg_indexes "
+                "WHERE schemaname = 'public' AND tablename = 'kb_documents'"
+            )
+            doc_indexes = {row[0] for row in cursor.fetchall()}
+            assert "kb_documents_project_root_source_unique" in doc_indexes
+            assert "kb_documents_project_source_unique" not in doc_indexes
 
             expected = {item.version: item.checksum for item in load_manifest()}
+            assert "v16" in expected
             cursor.execute(
                 "SELECT version, checksum FROM public.schema_migrations "
                 "WHERE execution_status = 'applied'"
@@ -203,6 +214,83 @@ def test_migrations_on_truly_fresh_database(tmp_path):
                     (saved_a["chunk_id"],),
                 )
                 assert cursor.fetchone()[0] == "unverified"
+
+                cursor.execute("SAVEPOINT v16_owner_check")
+                with pytest.raises(psycopg2.errors.CheckViolation):
+                    cursor.execute(
+                        "INSERT INTO public.project_knowledge "
+                        "(project_id, project_name, root_id, project_root, file_path, content, "
+                        "content_hash, dedup_key, source_uri, source_type, visibility, "
+                        "validation_status, agent_id, session_id) "
+                        "VALUES ('project-a', 'Project A', 'root-a', %s, 'blank.md', 'c', "
+                        "'h-blank', 'dk-blank', 'file://blank', 'document', 'agent-private', "
+                        "'unverified', '   ', NULL)",
+                        (str(root_a),),
+                    )
+                cursor.execute("ROLLBACK TO SAVEPOINT v16_owner_check")
+
+                with pytest.raises(psycopg2.errors.CheckViolation):
+                    cursor.execute(
+                        "INSERT INTO public.kb_entities "
+                        "(project_id, visibility, agent_id, session_id, name, stable_key, type) "
+                        "VALUES ('project-a', 'agent-private', '   ', NULL, 'BlankEnt', "
+                        "'project-a:root-a:agent-private::blank:cls:BlankEnt', 'class')"
+                    )
+                cursor.execute("ROLLBACK TO SAVEPOINT v16_owner_check")
+
+                cursor.execute(
+                    "INSERT INTO public.kb_entities "
+                    "(project_id, visibility, agent_id, session_id, name, stable_key, type) "
+                    "VALUES ('project-a', 'shared', NULL, NULL, 'Ent1', "
+                    "'project-a:root-a:shared:::cls:Ent1', 'class') RETURNING id"
+                )
+                ent1_id = cursor.fetchone()[0]
+                cursor.execute(
+                    "INSERT INTO public.kb_entities "
+                    "(project_id, visibility, agent_id, session_id, name, stable_key, type) "
+                    "VALUES ('project-a', 'shared', NULL, NULL, 'Ent2', "
+                    "'project-a:root-a:shared:::cls:Ent2', 'class') RETURNING id"
+                )
+                ent2_id = cursor.fetchone()[0]
+                cursor.execute("SAVEPOINT v16_rel_check")
+                with pytest.raises(psycopg2.errors.CheckViolation):
+                    cursor.execute(
+                        "INSERT INTO public.kb_relations "
+                        "(project_id, visibility, agent_id, session_id, from_id, to_id, relation_type) "
+                        "VALUES ('project-a', 'session-private', 'agent-a', '   ', %s, %s, 'uses')",
+                        (ent1_id, ent2_id),
+                    )
+                cursor.execute("ROLLBACK TO SAVEPOINT v16_rel_check")
+                cursor.execute("RELEASE SAVEPOINT v16_rel_check")
+                cursor.execute("RELEASE SAVEPOINT v16_owner_check")
+
+                cursor.execute(
+                    "INSERT INTO public.kb_documents "
+                    "(project_id, project_name, root_id, project_root, file_path, source_uri, content_hash) "
+                    "VALUES ('project-a', 'Project A', 'root-a', %s, 'shared.md', 'file://shared', 'h1'), "
+                    "('project-a', 'Project A', 'root-b', %s, 'shared.md', 'file://shared', 'h1') "
+                    "RETURNING id",
+                    (str(root_a), str(root_b)),
+                )
+                assert len(cursor.fetchall()) == 2
+            database_connection.commit()
+
+            dest_file = root_a / "dest.md"
+            other_file = root_a / "other.md"
+            dest_file.write_text("retired destination content for move test", encoding="utf-8")
+            other_file.write_text("active source content moved onto retired dest", encoding="utf-8")
+            engine.save(
+                context_a, dest_file.read_text(), source_uri=str(dest_file),
+                source_type="document", file_path="dest.md",
+            )
+            assert engine.delete_document(context_a, str(dest_file))["deleted_count"] == 1
+            saved_other = engine.save(
+                context_a, other_file.read_text(), source_uri=str(other_file),
+                source_type="document", file_path="other.md",
+            )
+            moved = engine.move_document(context_a, str(other_file), str(dest_file))
+            assert moved["moved_count"] >= 1
+            assert engine._live_chunk_ids(context_a, "dest.md", "document") == {saved_other["chunk_id"]}
     finally:
         if database_connection is not None:
             database_connection.close()

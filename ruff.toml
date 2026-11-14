@@ -1,4 +1,4 @@
-target-version = "py312"
+target-version = "py314"
 exclude = [
     ".agents",
     ".claude",
@@ -18,4 +18,4 @@ exclude = [
 ]
 
 [lint]
-select = ["F"]
+select = ["F", "E9"]

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import errno
 import fcntl
 import http.client
 import json
@@ -84,12 +85,14 @@ def _exchange(base_url: str, path: str, payload: dict | None, deadline: float) -
     try:
         if cancelled is not None and cancelled.is_set():
             raise InferenceUnavailable("LOCAL_MODEL_CANCELLED")
+        conn.connect()
+        transport_socket = conn.sock
         data = json.dumps(payload).encode() if payload is not None else None
         conn.request("POST" if data else "GET", path, data,
                      {"Content-Type": "application/json", "X-Request-ID": request_id})
         # HTTP/1.0 may detach conn.sock when response headers arrive. Keep the
         # original socket so cancellation can still interrupt a streaming read.
-        transport_socket = conn.sock
+        transport_socket = conn.sock or transport_socket
         response = conn.getresponse()
         if response.status != 200:
             raise InferenceUnavailable("LOCAL_MODEL_HTTP_ERROR")
@@ -176,10 +179,22 @@ def generate(base_url: str, model: str, prompt: str, system_prompt: str, *,
     if len(prompt+system_prompt) + num_predict + 128 > num_ctx:
         raise InferenceUnavailable("MODEL_INPUT_LIMIT")
     deadline = time.monotonic()+timeout
-    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if LOCK_PATH.is_symlink():
+        raise InferenceUnavailable("INVALID_LOCK_FILE")
     token = _request_id.set(_request_id.get() or str(uuid.uuid4()))
     try:
-        with LOCK_PATH.open("a") as lock:
+        try:
+            lock_fd = os.open(
+                LOCK_PATH,
+                os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise InferenceUnavailable("INVALID_LOCK_FILE") from exc
+            raise
+        with os.fdopen(lock_fd, "r+") as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:

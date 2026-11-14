@@ -1,10 +1,10 @@
 *.py usr/lib/local-optimize/
 local_model.json usr/lib/local-optimize/
-requirements*.txt usr/lib/local-optimize/
+requirements.txt usr/lib/local-optimize/
 retrieval_policy.json usr/lib/local-optimize/
+postgres_backup.sh usr/lib/local-optimize/
 deploy/intel-xpu-requirements.txt usr/lib/local-optimize/deploy/
 docs usr/share/doc/local-optimize/
-evaluation usr/lib/local-optimize/
 hooks usr/lib/local-optimize/
 migrations usr/lib/local-optimize/
 packaging/runtime-policy.json usr/lib/local-optimize/packaging/

@@ -28,8 +28,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-# Tokenization is host work; do not create a CPU worker pool beside the GPU.
+# Tokenization and PyTorch host execution must not spawn competing CPU pools beside Intel XPU.
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
 
 import psycopg2
 from psycopg2 import pool as pgpool
@@ -44,7 +46,7 @@ from query_cache import BoundedTTLCache as _BoundedTTLCache
 from query_cache import PersistentAnswerCache as _PersistentAnswerCache
 from query_cache import PersistentQueryCache as _PersistentQueryCache
 from source_evidence import read_snapshot, prepare_evidence
-from evidence_ranker import EvidenceRanker, POLICY_HASH
+from evidence_ranker import EvidenceRanker, POLICY_HASH, XPU_EXECUTION_LOCK
 from query_analysis import retrieval_variants, requests_secret_value
 from dataclasses import replace
 from project_context import get_project_registry
@@ -456,19 +458,21 @@ class XpuReranker:
     """Compute candidate cosine similarity on Intel XPU without CPU fallback."""
 
     def __init__(self) -> None:
-        require_intel_xpu()
+        with XPU_EXECUTION_LOCK:
+            require_intel_xpu()
 
     def re_rank(self, query_emb: np.ndarray, db_embeddings: np.ndarray) -> np.ndarray:
         import torch
 
         if len(db_embeddings) == 0:
             return np.empty(0, dtype=np.float32)
-        with torch.inference_mode():
-            query = torch.as_tensor(query_emb, dtype=torch.float32, device="xpu")
-            matrix = torch.as_tensor(db_embeddings, dtype=torch.float32, device="xpu")
-            query = query / (torch.linalg.vector_norm(query) + 1e-8)
-            matrix = matrix / (torch.linalg.vector_norm(matrix, dim=1, keepdim=True) + 1e-8)
-            return (matrix @ query).cpu().numpy()
+        with XPU_EXECUTION_LOCK:
+            with torch.inference_mode():
+                query = torch.as_tensor(query_emb, dtype=torch.float32, device="xpu")
+                matrix = torch.as_tensor(db_embeddings, dtype=torch.float32, device="xpu")
+                query = query / (torch.linalg.vector_norm(query) + 1e-8)
+                matrix = matrix / (torch.linalg.vector_norm(matrix, dim=1, keepdim=True) + 1e-8)
+                return (matrix @ query).cpu().numpy()
 
 
 # ===========================================================================
@@ -626,6 +630,9 @@ class RagEngine:
 
         self._exiting = False
         self._init_query_caches()
+        self._conn_slots = threading.BoundedSemaphore(16)
+        self._held_conn_lock = threading.Lock()
+        self._held_conn_ids: set[int] = set()
         db_params = get_db_params()
         # Create only one connection eagerly; schema compatibility is checked
         # before any tokenizer, reranker, or embedding model is initialized.
@@ -665,10 +672,14 @@ class RagEngine:
 
     def _init_query_caches(self) -> None:
         self._query_cache = _BoundedTTLCache(
-            QUERY_CACHE_MAX_ENTRIES, QUERY_CACHE_TTL_SECONDS
+            QUERY_CACHE_MAX_ENTRIES,
+            QUERY_CACHE_TTL_SECONDS,
+            wait_timeout_seconds=20.0,
         )
         self._embedding_cache = _BoundedTTLCache(
-            EMBEDDING_CACHE_MAX_ENTRIES, EMBEDDING_CACHE_TTL_SECONDS
+            EMBEDDING_CACHE_MAX_ENTRIES,
+            EMBEDDING_CACHE_TTL_SECONDS,
+            wait_timeout_seconds=20.0,
         )
         self._cache_generation_lock = threading.RLock()
         self._project_cache_generations: dict[str, int] = {}
@@ -788,6 +799,104 @@ class RagEngine:
                     time.monotonic()
                 )
 
+    def invalidate_caches(
+        self, project_id: str | None = None, *, purge: bool = False
+    ) -> dict[str, Any]:
+        """Invalidate local L1/embedding caches and bump shared DB cache generations."""
+        self._ensure_query_caches()
+        target_project = str(project_id).strip() if project_id else None
+        with self._cache_generation_lock:
+            if target_project:
+                self._project_cache_generations[target_project] = (
+                    self._project_cache_generations.get(target_project, 0) + 1
+                )
+                self._project_generation_checked_at.pop(target_project, None)
+            else:
+                for pid in list(self._project_cache_generations):
+                    self._project_cache_generations[pid] += 1
+                self._project_generation_checked_at.clear()
+        if target_project:
+            self._query_cache.invalidate(
+                lambda key: isinstance(key, tuple) and bool(key) and key[0] == target_project
+            )
+        else:
+            self._query_cache.invalidate()
+        self._embedding_cache.invalidate()
+
+        conn = self._get_conn()
+        error = False
+        bumped: list[str] = []
+        last_generation: int | None = None
+        rows_removed = 0
+        try:
+            with conn.cursor() as cur:
+                if target_project:
+                    project_ids = [target_project]
+                else:
+                    cur.execute(
+                        "SELECT DISTINCT project_id FROM public.rag_cache_generation "
+                        "UNION SELECT DISTINCT project_id FROM public.project_knowledge"
+                    )
+                    project_ids = [row[0] for row in cur.fetchall() if row and row[0]]
+                for pid in project_ids:
+                    shared = self._persistent_cache.bump_generation(pid, connection=conn)
+                    if shared is not None:
+                        last_generation = int(shared)
+                        with self._cache_generation_lock:
+                            self._project_cache_generations[pid] = max(
+                                self._project_cache_generations.get(pid, 0),
+                                last_generation,
+                            )
+                            self._project_generation_checked_at[pid] = time.monotonic()
+                    bumped.append(pid)
+                if purge:
+                    if target_project:
+                        cur.execute(
+                            "DELETE FROM public.rag_query_cache WHERE project_id = %s",
+                            (target_project,),
+                        )
+                    else:
+                        cur.execute("DELETE FROM public.rag_query_cache")
+                    rows_removed += max(0, int(cur.rowcount or 0))
+                    cur.execute("SAVEPOINT purge_answer_cache")
+                    try:
+                        if target_project:
+                            cur.execute(
+                                "DELETE FROM public.rag_local_answer_cache WHERE project_id = %s",
+                                (target_project,),
+                            )
+                        else:
+                            cur.execute("DELETE FROM public.rag_local_answer_cache")
+                        rows_removed += max(0, int(cur.rowcount or 0))
+                        cur.execute("RELEASE SAVEPOINT purge_answer_cache")
+                    except Exception:
+                        cur.execute("ROLLBACK TO SAVEPOINT purge_answer_cache")
+                        cur.execute("RELEASE SAVEPOINT purge_answer_cache")
+            conn.commit()
+            return {
+                "status": "success",
+                "project_id": target_project,
+                "purged": bool(purge),
+                "projects_bumped": len(bumped),
+                "generation": last_generation,
+                "rows_removed": rows_removed,
+            }
+        except Exception as exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            error = True
+            log.warning("Cache invalidation DB error type=%s", type(exc).__name__)
+            return {
+                "status": "error",
+                "project_id": target_project,
+                "purged": False,
+                "message": "Cache invalidation failed",
+            }
+        finally:
+            self._put_conn(conn, error=error)
+
     def cache_metrics(self) -> dict[str, dict[str, int]]:
         self._ensure_query_caches()
         return {
@@ -897,18 +1006,19 @@ class RagEngine:
         model_path = self._require_local_path(MODEL_PATH, "MODEL_PATH")
         if not model_path.is_dir():
             raise RuntimeError("MODEL_PATH must be a local SentenceTransformer directory")
-        require_intel_xpu()
         import torch
         from sentence_transformers import SentenceTransformer
 
-        # CPU handles tokenization and transport, never embedding inference.
-        torch.set_num_threads(1)
-        self._st_model = SentenceTransformer(
-            str(model_path), device="xpu", local_files_only=True
-        )
-        tensors = (*self._st_model.parameters(), *self._st_model.buffers())
-        if not tensors or any(tensor.device.type != "xpu" for tensor in tensors):
-            raise RuntimeError("Embedding model is not fully placed on Intel XPU")
+        with XPU_EXECUTION_LOCK:
+            require_intel_xpu()
+            # CPU handles tokenization and transport, never embedding inference.
+            torch.set_num_threads(1)
+            self._st_model = SentenceTransformer(
+                str(model_path), device="xpu", local_files_only=True
+            )
+            tensors = (*self._st_model.parameters(), *self._st_model.buffers())
+            if not tensors or any(tensor.device.type != "xpu" for tensor in tensors):
+                raise RuntimeError("Embedding model is not fully placed on Intel XPU")
         self._warm_up_model()
         log.info("Local embedding model ready on Intel XPU")
 
@@ -916,17 +1026,21 @@ class RagEngine:
         """Report verified placement without claiming zero host CPU overhead."""
         import torch
 
-        require_intel_xpu()
-        tensors = (*self._st_model.parameters(), *self._st_model.buffers())
-        if not tensors or any(tensor.device.type != "xpu" for tensor in tensors):
-            raise RuntimeError("Embedding model is not fully placed on Intel XPU")
+        with XPU_EXECUTION_LOCK:
+            require_intel_xpu()
+            tensors = (*self._st_model.parameters(), *self._st_model.buffers())
+            if not tensors or any(tensor.device.type != "xpu" for tensor in tensors):
+                raise RuntimeError("Embedding model is not fully placed on Intel XPU")
+            device_name = torch.xpu.get_device_name(0)
+            embedding_device = str(self._st_model.device)
+            cpu_threads = torch.get_num_threads()
         return {
             "backend": "torch-xpu",
-            "device": torch.xpu.get_device_name(0),
-            "embedding_device": str(self._st_model.device),
+            "device": device_name,
+            "embedding_device": embedding_device,
             "similarity_device": "xpu",
             "cpu_fallback": False,
-            "torch_cpu_threads": torch.get_num_threads(),
+            "torch_cpu_threads": cpu_threads,
             "model_warmed_up": self._model_warmed_up,
             "evidence_ranker": self.evidence_ranker.runtime_status(),
         }
@@ -945,15 +1059,38 @@ class RagEngine:
                     f"Model returned invalid embedding dimension: {len(result)} (expected {EMBEDDING_DIM})"
                 )
             self._model_warmed_up = True
-            log.info("✅ Model warm-up successful.")
+            log.info("Model warm-up successful.")
         except Exception as e:
             raise RuntimeError(f"Engine initialization failure during warm-up: {e}") from e
 
     def _get_conn(self):
-        return self._pool.getconn()
+        slots = getattr(self, "_conn_slots", None)
+        if slots is not None and not slots.acquire(timeout=15.0):
+            raise RuntimeError("Database connection pool slot timeout")
+        try:
+            conn = self._pool.getconn()
+        except Exception:
+            if slots is not None:
+                slots.release()
+            raise
+        if slots is not None:
+            with self._held_conn_lock:
+                self._held_conn_ids.add(id(conn))
+        return conn
 
     def _put_conn(self, conn, error: bool = False):
-        self._pool.putconn(conn, close=error)
+        try:
+            self._pool.putconn(conn, close=error)
+        finally:
+            slots = getattr(self, "_conn_slots", None)
+            if slots is not None:
+                released = False
+                with self._held_conn_lock:
+                    if id(conn) in self._held_conn_ids:
+                        self._held_conn_ids.remove(id(conn))
+                        released = True
+                if released:
+                    slots.release()
 
     def _ensure_schema(self):
         """Fail closed when the versioned production schema is incompatible.
@@ -1232,12 +1369,18 @@ class RagEngine:
 
     def _encode_uncached(self, text: str) -> np.ndarray:
         """Encode already-prefixed text on Intel XPU; return only the vector to CPU."""
-        if self._st_model.device.type != "xpu":
-            raise RuntimeError("Embedding model must remain on Intel XPU")
-        return self._st_model.encode(
-            text, device="xpu", convert_to_numpy=True, normalize_embeddings=True,
-            show_progress_bar=False,
-        )
+        import torch
+
+        with XPU_EXECUTION_LOCK:
+            if self._st_model.device.type != "xpu":
+                raise RuntimeError("Embedding model must remain on Intel XPU")
+            vec = self._st_model.encode(
+                text, device="xpu", convert_to_numpy=True, normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+            if hasattr(torch, "xpu") and torch.xpu.is_available():
+                torch.xpu.synchronize()
+            return vec
 
     # ===========================================================================
     # Virtual Memory Controller (VMC) Logic
@@ -1264,44 +1407,42 @@ class RagEngine:
         """
         token_cost = self.count_tokens(content)
         raw_page_id, scoped_id = self._scoped_page_id(context, page_id)
-        
-        with self._ram_lock:
-            # Если страница уже есть в RAM, просто обновим её данные и счетчики
-            if scoped_id in self.ram_pages:
-                p = self.ram_pages[scoped_id]
-                delta = token_cost - p.token_count
-                if delta > 0:
-                    self.ram_evict_if_needed(context, delta, conn=conn)
-                p.content = content
-                p.page_type = page_type
-                p.importance = importance
-                p.pinned = pinned
-                p.access_count += 1
-                p.last_accessed = time.time()
-                p.token_count = token_cost
-                if page_type != "system_guideline" and hasattr(context, "write_visibility"):
-                    p.dirty = True
-                return
 
-            # Освобождаем место при необходимости, передавая текущее соединение
-            self.ram_evict_if_needed(context, token_cost, conn=conn)
-
-            # Выделяем страницу
-            page = MemoryPage(scoped_id, content, page_type, importance, pinned)
-            page.raw_page_id = raw_page_id
-            page.token_count = token_cost
-            page.context = context
-            self.ram_pages[scoped_id] = page
-            log.debug("RAM: выделена страница '%s' (%d токенов)", scoped_id, token_cost)
+        while True:
+            with self._ram_lock:
+                existing = self.ram_pages.get(scoped_id)
+                needed = (token_cost - existing.token_count) if existing is not None else token_cost
+                total_tokens = sum(p.token_count for p in self.ram_pages.values())
+                if needed <= 0 or total_tokens + needed <= MAX_RAM_TOKENS:
+                    if existing is not None:
+                        existing.content = content
+                        existing.page_type = page_type
+                        existing.importance = importance
+                        existing.pinned = pinned
+                        existing.access_count += 1
+                        existing.last_accessed = time.time()
+                        existing.token_count = token_cost
+                        if page_type != "system_guideline" and hasattr(context, "write_visibility"):
+                            existing.dirty = True
+                        return
+                    page = MemoryPage(scoped_id, content, page_type, importance, pinned)
+                    page.raw_page_id = raw_page_id
+                    page.token_count = token_cost
+                    page.context = context
+                    self.ram_pages[scoped_id] = page
+                    log.debug("RAM: выделена страница '%s' (%d токенов)", scoped_id, token_cost)
+                    return
+            # Evict outside _ram_lock so DB I/O in ram_flush_page never blocks memory readers/writers.
+            self.ram_evict_if_needed(context, needed, conn=conn)
 
     def ram_evict_if_needed(self, context: ProjectContext, required_tokens: int, conn=None):
         """Освобождение памяти по гибридному алгоритму LRU/LFU"""
-        with self._ram_lock:
-            total_tokens = sum(p.token_count for p in self.ram_pages.values())
-            
-            while total_tokens + required_tokens > MAX_RAM_TOKENS:
-                # Находим незакрепленные (non-pinned) кандидаты; если их нет,
-                # вытесняем закрепленные страницы других сессий или системные инструкции
+        while True:
+            flush_target: tuple[str, Any, MemoryPage, tuple[float, str]] | None = None
+            with self._ram_lock:
+                total_tokens = sum(p.token_count for p in self.ram_pages.values())
+                if total_tokens + required_tokens <= MAX_RAM_TOKENS:
+                    return
                 candidates = [p for p in self.ram_pages.values() if not p.pinned]
                 if not candidates:
                     candidates = [
@@ -1312,25 +1453,36 @@ class RagEngine:
                     log.warning("RAM OVERFLOW: Все страницы RAM закреплены (Kernel Panic!). Вытеснение невозможно.")
                     raise RuntimeError("RAM capacity exhausted by pinned pages")
 
-                # Правильный алгоритм LRU/LFU: минимальный last_accessed уходит первым
                 victim = min(
                     candidates,
                     key=lambda p: (p.importance * 20) + (p.access_count * 5) + p.last_accessed
                 )
-
                 log.info("RAM: Вытеснение страницы '%s' по алгоритму LRU/LFU.", victim.page_id)
-                
-                # Проверка Dirty Bit перед стиранием из ОЗУ:
-                if victim.dirty:
-                    log.info("RAM: Страница '%s' изменена (Dirty Bit = True). Запись на HDD...", victim.page_id)
-                    if victim.context is None:
-                        raise RuntimeError("RAM page owner is unknown")
-                    if not self.ram_flush_page(victim.context, victim, conn=conn):
-                        raise RuntimeError("RAM page flush failed; page retained")
+                if not victim.dirty:
+                    self.ram_pages.pop(victim.page_id, None)
+                    continue
+                if victim.context is None:
+                    raise RuntimeError("RAM page owner is unknown")
+                log.info("RAM: Страница '%s' изменена (Dirty Bit = True). Запись на HDD...", victim.page_id)
+                flush_target = (
+                    victim.page_id,
+                    victim.context,
+                    victim,
+                    (victim.last_accessed, victim.content),
+                )
 
-                # Удаляем из оперативной памяти
-                total_tokens -= victim.token_count
-                del self.ram_pages[victim.page_id]
+            victim_id, victim_ctx, victim_page, snapshot_marker = flush_target
+            if not self.ram_flush_page(victim_ctx, victim_page, conn=conn):
+                raise RuntimeError("RAM page flush failed; page retained")
+
+            with self._ram_lock:
+                current = self.ram_pages.get(victim_id)
+                if (
+                    current is victim_page
+                    and not current.dirty
+                    and (current.last_accessed, current.content) == snapshot_marker
+                ):
+                    del self.ram_pages[victim_id]
 
     def ram_flush_page(self, context: ProjectContext, page: MemoryPage, conn=None):
         """Смыв (Flush) измененной страницы на жесткий диск (PostgreSQL kb_entities)"""
@@ -1382,6 +1534,7 @@ class RagEngine:
         conn_provided = conn is not None
         db_conn = conn if conn_provided else self._get_conn()
         error = False
+        loaded_page: tuple[str, str, str, dict[str, Any]] | None = None
         try:
             from config import build_entity_stable_key
             raw_id, scoped_id = self._scoped_page_id(context, page_id)
@@ -1399,19 +1552,7 @@ class RagEngine:
                     p_type, content, meta = row
                     meta_dict = meta if isinstance(meta, dict) else json.loads(meta)
                     resolved_type = meta_dict.get("page_type") or p_type
-                    self.ram_allocate(
-                        context=context,
-                        page_id=raw_id,
-                        content=content,
-                        page_type=resolved_type,
-                        importance=meta_dict.get("importance", 5),
-                        pinned=meta_dict.get("pinned", False),
-                        conn=db_conn
-                    )
-                    return True
-                else:
-                    log.warning("RAM PAGE FAULT EXCEPTION: Сущность '%s' отсутствует на HDD.", page_id)
-                    return False
+                    loaded_page = (raw_id, content, resolved_type, meta_dict)
         except Exception as e:
             if not conn_provided:
                 db_conn.rollback()
@@ -1421,6 +1562,22 @@ class RagEngine:
         finally:
             if not conn_provided:
                 self._put_conn(db_conn, error=error)
+
+        if loaded_page is None:
+            log.warning("RAM PAGE FAULT EXCEPTION: Сущность '%s' отсутствует на HDD.", page_id)
+            return False
+
+        raw_id, content, resolved_type, meta_dict = loaded_page
+        self.ram_allocate(
+            context=context,
+            page_id=raw_id,
+            content=content,
+            page_type=resolved_type,
+            importance=meta_dict.get("importance", 5),
+            pinned=meta_dict.get("pinned", False),
+            conn=conn if conn_provided else None,
+        )
+        return True
 
     def agentic_search(
         self,
@@ -1646,91 +1803,6 @@ class RagEngine:
 
                 current_level = next_level
 
-            # Шаг 4. Компилируем Когнитивный Щит Самопроверки (Cognitive Shield & Self-Doubt)
-            verification_checklist = []
-            uncertainty_warnings = []
-            
-            with self._ram_lock:
-                scoped_pages = [(key, page) for key, page in self.ram_pages.items()
-                                if page.context == context]
-            for page_id, page in scoped_pages:
-                short_id = getattr(page, "raw_page_id", None) or (
-                    page_id.split(":", 3)[-1] if page_id.count(":") >= 3 else page_id
-                )
-                if page.pinned and (short_id.startswith("query_") or short_id == "cognitive_shield" or short_id.startswith("policy_")):
-                    continue
-                
-                if page.page_type == "skeleton":
-                    verification_checklist.append(f"- CLASS SIGNATURE: Class '{short_id.replace('_Skeleton', '')}' is fully VERIFIED. You possess its skeleton (methods, args).")
-                elif page.page_type == "function":
-                    verification_checklist.append(f"- ATOMIC METHOD IMPLEMENTATION: Method '{short_id}' is VERIFIED and loaded in active RAM.")
-                elif page.page_type == "file":
-                    verification_checklist.append(f"- CODEFILE REFERENCE: File '{short_id}' is VERIFIED.")
-                elif page.page_type == "concept":
-                    verification_checklist.append(f"- KNOWLEDGE CONCEPT: '{short_id}' is verified in memory.")
-
-            # Ищем связи с низким уровнем уверенности (confidence < 0.6) для вывода предупреждений
-            for item in graph_context:
-                conf = item.get("confidence", 1.0)
-                if conf < 0.6:
-                    uncertainty_warnings.append(
-                        f"WARNING: The association between memory nodes regarding '{item['entity']}' is highly hypothetical (Confidence: {conf:.2f}). "
-                        f"Do NOT blindly assume this connection is correct. State doubt in your reasoning."
-                    )
-
-            cognitive_shield = (
-                "=== SYSTEM GROUNDING & CONSTRUCTIVE SELF-DOUBT SYSTEM ===\n"
-                "You are operating under strict memory constraints. To eliminate hallucinations, you MUST follow these laws:\n"
-                "1. STRICT BOUNDARY LAW: Never assume a method, parameter, or property exists in a class unless it is listed in the 'VERIFIED ACTIVE RAM CHECKLIST' below. "
-                "If it is not present in RAM, you must state: 'PAGE_FAULT: [EntityName]' or explicitly tell the developer you do not have its implementation.\n"
-                "2. PRINCIPLE OF SYSTEMATIC DOUBT: If you encounter warnings in the 'MEMORY FRAME WARNINGS' section, "
-                "you are strictly prohibited from implementing code using that relation without stating your doubt. You must prompt the user to confirm.\n"
-                "3. HARD DISK REFERENCE: Rely strictly on the atomic implementations provided below. If a method implementation is not present, you must doubt any assumptions about its side-effects.\n\n"
-                "--- VERIFIED ACTIVE RAM CHECKLIST ---\n"
-                + ("\n".join(verification_checklist) if verification_checklist else "- No verified structural context loaded in this frame.") + "\n\n"
-                "--- MEMORY FRAME WARNINGS ---\n"
-                + ("\n".join(uncertainty_warnings) if uncertainty_warnings else "- All memory relations in this context frame have high confidence (No anomalies detected).")
-            )
-
-            # Выделяем страницу Когнитивного Щита в RAM как pinned
-            self.ram_allocate(
-                context=context,
-                page_id="cognitive_shield",
-                content=cognitive_shield,
-                page_type="system_guideline",
-                importance=10,
-                pinned=True,
-                conn=conn
-            )
-
-            # Шаг 5. Динамическая инжекция системных скилов и политик из директории skills
-            from skills_manager import get_core_skills, get_conditional_skills, PRIMARY_SKILLS_DIR
-            skills_dir = PRIMARY_SKILLS_DIR
-            selected_skills = get_core_skills()
-            for cs in get_conditional_skills(query):
-                if cs not in selected_skills:
-                    selected_skills.append(cs)
-
-            if skills_dir.exists():
-                for skill_file in selected_skills:
-                    path = skills_dir / skill_file
-                    if path.exists():
-                        try:
-                            with open(path, "r", encoding="utf-8") as sf:
-                                skill_content = sf.read()
-                            skill_id = f"policy_{skill_file.replace('.md', '')}"
-                            self.ram_allocate(
-                                context=context,
-                                page_id=skill_id,
-                                content=skill_content,
-                                page_type="system_guideline",
-                                importance=9,
-                                pinned=True,
-                                conn=conn
-                            )
-                        except Exception as se:
-                            log.warning("Не удалось загрузить скил %s: %s", skill_file, se)
-
             # Применяем санитизацию контекста (Phase 3.4) для защиты от indirect prompt injection
             sanitized_hits = []
             for hit in top_hits[:limit]:
@@ -1829,19 +1901,19 @@ class RagEngine:
                         if f.endswith('.py'):
                             py_files.append(os.path.join(root, f))
                             
+                from config import build_entity_stable_key
+                owner_sql, owner_params = build_owner_scope_sql(context)
+                stale_py_files: list[tuple[str, float, str, str]] = []
                 conn = None
                 error = False
                 try:
-                    from config import build_entity_stable_key
                     conn = self._get_conn()
-                    owner_sql, owner_params = build_owner_scope_sql(context)
                     for pf in py_files:
                         file_name = os.path.basename(pf)
                         mtime = os.path.getmtime(pf)
                         rel_path = os.path.relpath(pf, active_root)
                         s_key = build_entity_stable_key(context, rel_path, "file", rel_path)
 
-                        # Проверяем, когда файл индексировался последний раз
                         with conn.cursor() as cur:
                             cur.execute(
                                 "SELECT metadata FROM public.kb_entities "
@@ -1865,42 +1937,54 @@ class RagEngine:
                                 need_indexing = False
 
                         if need_indexing:
-                            log.info("Self-Learning: Обнаружено изменение в '%s'. Автоматическая фоновая переиндексация...", file_name)
-                            self.index_code(context, pf)
-                            # Обновляем mtime в БД по stable_key
-                            with conn.cursor() as cur:
-                                cur.execute(
-                                    "UPDATE public.kb_entities SET metadata = metadata || %s::jsonb "
-                                    f"WHERE project_id = %s AND {owner_sql} AND stable_key = %s",
-                                    (json.dumps({"mtime": mtime}), context.project_id, *owner_params, s_key),
-                                )
-                            conn.commit()
-                            time.sleep(0.1)
+                            stale_py_files.append((pf, mtime, file_name, s_key))
                 except Exception as e:
                     if conn is not None:
                         conn.rollback()
                         error = True
-                    log.warning("Ошибка при фоновой индексации кодовой базы: %s", e)
+                    log.warning("Ошибка при проверке кодовой базы: %s", e)
                 finally:
                     if conn:
                         self._put_conn(conn, error=error)
+
+                for pf, mtime, file_name, s_key in stale_py_files:
+                    log.info("Self-Learning: Обнаружено изменение в '%s'. Автоматическая фоновая переиндексация...", file_name)
+                    self.index_code(context, pf)
+                    conn = None
+                    error = False
+                    try:
+                        conn = self._get_conn()
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                "UPDATE public.kb_entities SET metadata = metadata || %s::jsonb "
+                                f"WHERE project_id = %s AND {owner_sql} AND stable_key = %s",
+                                (json.dumps({"mtime": mtime}), context.project_id, *owner_params, s_key),
+                            )
+                        conn.commit()
+                    except Exception as e:
+                        if conn is not None:
+                            conn.rollback()
+                            error = True
+                        log.warning("Ошибка при обновлении mtime кодовой базы: %s", e)
+                    finally:
+                        if conn:
+                            self._put_conn(conn, error=error)
+                    time.sleep(0.1)
 
             # 2. Сканируем директорию скилов (skills/) для автоматического обучения новым инструкциям
             skills_dir = os.path.join(active_root, "skills")
             if os.path.exists(skills_dir):
                 skill_files = [os.path.join(skills_dir, f) for f in os.listdir(skills_dir) if f.endswith(".md")]
-
+                from config import build_entity_stable_key
+                owner_sql, owner_params = build_owner_scope_sql(context)
+                stale_skill_files: list[tuple[str, str]] = []
                 conn = None
                 error = False
                 try:
-                    from config import build_entity_stable_key
                     conn = self._get_conn()
-                    owner_sql, owner_params = build_owner_scope_sql(context)
                     for sf in skill_files:
                         file_name = os.path.basename(sf)
                         mtime = os.path.getmtime(sf)
-
-                        # Проверяем дату изменения в БД
                         skill_name = f"policy_{file_name.replace('.md', '')}"
                         s_key = build_entity_stable_key(context, f"skills/{file_name}", "system_guideline", skill_name)
                         with conn.cursor() as cur:
@@ -1920,16 +2004,19 @@ class RagEngine:
                                 need_indexing = False
 
                         if need_indexing:
-                            log.info("Self-Learning: Обнаружен новый или измененный скил '%s'. Автоматическое добавление в векторную базу...", file_name)
-                            self.index_skill(context, sf)
+                            stale_skill_files.append((sf, file_name))
                 except Exception as e:
                     if conn is not None:
                         conn.rollback()
                         error = True
-                    log.warning("Ошибка при фоновой автоиндексации скилов: %s", e)
+                    log.warning("Ошибка при проверке скилов: %s", e)
                 finally:
                     if conn:
                         self._put_conn(conn, error=error)
+
+                for sf, file_name in stale_skill_files:
+                    log.info("Self-Learning: Обнаружен новый или измененный скил '%s'. Автоматическое добавление в векторную базу...", file_name)
+                    self.index_skill(context, sf)
             
             # Проверяем изменения кодовой базы и скилов каждые 30 секунд (проверяя флаг выхода каждые 0.1 сек)
             for _ in range(300):
@@ -1968,27 +2055,26 @@ class RagEngine:
                         {"file": file_name, "mtime": mtime, "stable_key": skill_skey, "relative_path": f"skills/{file_name}", "project_name": context.project_name},
                         source_ref=f"skills/{file_name}"
                     )
-                    
                 conn.commit()
-                
-                # Векторизуем скил в общую векторную память для мгновенного семантического извлечения
-                self.save(
-                    context=context,
-                    content=f"Системное руководство/Скил '{file_name}':\n\n{content}",
-                    metadata={"file": file_name, "type": "system_guideline", "entity_id": skill_db_id},
-                    source_uri=str(Path(file_path).resolve()),
-                    source_type="skill",
-                    file_path=f"skills/{file_name}",
-                )
-                
-                log.info("Self-Learning: Скил '%s' успешно векторизован в базу знаний.", file_name)
-                return {"status": "success", "message": f"Скил {file_name} успешно проиндексирован."}
             except Exception as inner_e:
                 conn.rollback()
                 error = True
                 raise inner_e
             finally:
                 self._put_conn(conn, error=error)
+
+            # Векторизуем скил в общую векторную память после освобождения соединения пула
+            self.save(
+                context=context,
+                content=f"Системное руководство/Скил '{file_name}':\n\n{content}",
+                metadata={"file": file_name, "type": "system_guideline", "entity_id": skill_db_id},
+                source_uri=str(Path(file_path).resolve()),
+                source_type="skill",
+                file_path=f"skills/{file_name}",
+            )
+
+            log.info("Self-Learning: Скил '%s' успешно векторизован в базу знаний.", file_name)
+            return {"status": "success", "message": f"Скил {file_name} успешно проиндексирован."}
         except Exception as e:
             log.error("Self-Learning: Ошибка при индексации скила %s: %s", file_path, e)
             return {"status": "error", "message": str(e)}
@@ -2019,19 +2105,28 @@ class RagEngine:
 
                 # 2. Если это исправление (correction), обновляем веса связей в БД
                 if feedback_type == "correction" and correction:
-                    # Пример самообучения: ищем сущности, упомянутые в запросе и коррекции
-                    vis_sql, vis_params = build_read_scope_sql(
-                        context.read_scope.value, context.agent_id, context.session_id
-                    )
-                    cur.execute(
-                        "SELECT id, name FROM public.kb_entities "
-                        f"WHERE project_id = %s AND type != 'ram_page' AND {vis_sql}",
-                        [context.project_id, *vis_params],
-                    )
-                    entities = cur.fetchall()
+                    q_tokens = list(dict.fromkeys(
+                        tok.lower() for tok in re.findall(r"[A-Za-zА-Яа-яЁё0-9_.-]{3,64}", query or "")
+                    ))[:8]
+                    c_tokens = list(dict.fromkeys(
+                        tok.lower() for tok in re.findall(r"[A-Za-zА-Яа-яЁё0-9_.-]{3,64}", correction or "")
+                    ))[:8]
+                    all_tokens = list(dict.fromkeys([*q_tokens, *c_tokens]))
+                    if q_tokens and c_tokens and all_tokens:
+                        acl_sql, acl_params = build_evidence_acl_sql(context, "kb_entities", "e")
+                        cur.execute(
+                            "SELECT e.id, e.name FROM public.kb_entities e "
+                            "WHERE e.project_id = %s AND e.type != 'ram_page' "
+                            "AND LOWER(e.name) = ANY(%s) "
+                            f"AND ({acl_sql})",
+                            [context.project_id, all_tokens, *acl_params],
+                        )
+                        entities = cur.fetchall()
+                    else:
+                        entities = []
 
-                    query_ents = [ent_id for ent_id, name in entities if name.lower() in query.lower()]
-                    corr_ents  = [ent_id for ent_id, name in entities if name.lower() in correction.lower()]
+                    query_ents = [ent_id for ent_id, name in entities if name.lower() in q_tokens or name.lower() in query.lower()]
+                    corr_ents  = [ent_id for ent_id, name in entities if name.lower() in c_tokens or name.lower() in correction.lower()]
 
                     # Если мы нашли логическую связь между тем, о чем спросили, и исправлением:
                     for q_id in query_ents:
@@ -2176,6 +2271,22 @@ class RagEngine:
         if not get_project_registry(settings).owns_context_path(context, path, must_exist=True):
             raise ValueError("Path belongs to a more specific registered root")
         return path
+
+    @staticmethod
+    def _assert_registry_owner_compatible(
+        context: ProjectContext,
+        target_path: Path,
+        *,
+        must_exist: bool,
+    ) -> None:
+        try:
+            owner = get_project_registry(settings).owner_for_path(target_path, must_exist=must_exist)
+        except ValueError as exc:
+            if str(exc) == "Path is outside all registered roots":
+                return
+            raise ValueError("Path belongs to a separately registered root") from exc
+        if (owner.project_id, owner.root_id) != (context.project_id, context.root_id):
+            raise ValueError("Path belongs to a separately registered root")
 
     def _validate_index_file(
         self,
@@ -2726,14 +2837,28 @@ class RagEngine:
                         rel_pattern = f"%:{escape_like(rel_path)}:%"
                         cur.execute(
                             "DELETE FROM public.entity_evidence WHERE project_id = %s AND root_id = %s "
-                            "AND entity_id = ANY(%s) "
+                            f"AND entity_id = ANY(%s) AND {owner_sql} "
                             f"AND (source_ref = %s OR source_ref LIKE %s ESCAPE '{LIKE_ESCAPE}')",
-                            (context.project_id, context.root_id, to_delete_ids, rel_path, rel_pattern),
+                            (
+                                context.project_id,
+                                context.root_id,
+                                to_delete_ids,
+                                *owner_params,
+                                rel_path,
+                                rel_pattern,
+                            ),
                         )
                         cur.execute(
                             "DELETE FROM public.relation_evidence WHERE project_id = %s AND root_id = %s "
+                            f"AND {owner_sql} "
                             f"AND (source_ref = %s OR source_ref LIKE %s ESCAPE '{LIKE_ESCAPE}')",
-                            (context.project_id, context.root_id, rel_path, rel_pattern),
+                            (
+                                context.project_id,
+                                context.root_id,
+                                *owner_params,
+                                rel_path,
+                                rel_pattern,
+                            ),
                         )
                         cur.execute(
                             "DELETE FROM public.kb_relations WHERE project_id = %s "
@@ -2869,6 +2994,7 @@ class RagEngine:
         actually lost evidence for this file.
         """
         file_path_obj = context.validate_path(file_path, must_exist=False)
+        self._assert_registry_owner_compatible(context, file_path_obj, must_exist=False)
         rel_path = str(file_path_obj.relative_to(Path(context.project_root)))
         # rel_path is user-controlled: neutralise LIKE wildcards so a path containing
         # '%' or '_' cannot widen the match beyond the file being deleted.
@@ -2954,6 +3080,8 @@ class RagEngine:
         """Move document metadata atomically while preserving IDs and provenance."""
         source = context.validate_path(source_path, must_exist=False)
         destination = context.validate_path(destination_path, must_exist=True)
+        self._assert_registry_owner_compatible(context, source, must_exist=False)
+        self._assert_registry_owner_compatible(context, destination, must_exist=True)
         source_relative = str(source.relative_to(Path(context.project_root)))
         destination_relative = str(destination.relative_to(Path(context.project_root)))
         owner_agent = context.agent_id if context.write_visibility.value in ("agent-private", "session-private") else ""
@@ -2985,6 +3113,79 @@ class RagEngine:
                     ),
                 )
                 document_ids = [row[0] for row in cur.fetchall()]
+                if document_ids and source_relative != destination_relative:
+                    cur.execute(
+                        "UPDATE public.project_knowledge k SET validation_status = 'invalidated', "
+                        "updated_at = now(), valid_to = now() "
+                        "WHERE k.project_id = %s AND k.root_id = %s "
+                        "AND (k.file_path = %s OR k.source_uri = %s) "
+                        "AND (k.document_id IS NULL OR NOT (k.document_id = ANY(%s))) "
+                        f"AND {knowledge_owner_sql}",
+                        (
+                            context.project_id,
+                            context.root_id,
+                            destination_relative,
+                            str(destination),
+                            document_ids,
+                            *knowledge_owner_params,
+                        ),
+                    )
+                    cur.execute(
+                        "UPDATE public.entity_evidence SET is_active = FALSE, "
+                        "validation_status = 'invalidated', updated_at = now() "
+                        "WHERE project_id = %s AND root_id = %s AND source_ref = %s "
+                        f"AND {entity_owner_sql}",
+                        (
+                            context.project_id,
+                            context.root_id,
+                            destination_relative,
+                            *entity_owner_params,
+                        ),
+                    )
+                    cur.execute(
+                        "UPDATE public.relation_evidence SET is_active = FALSE, "
+                        "validation_status = 'invalidated', updated_at = now() "
+                        "WHERE project_id = %s AND root_id = %s AND source_ref = %s "
+                        f"AND {entity_owner_sql}",
+                        (
+                            context.project_id,
+                            context.root_id,
+                            destination_relative,
+                            *entity_owner_params,
+                        ),
+                    )
+                    cur.execute(
+                        "UPDATE public.kb_documents SET is_deleted = TRUE, "
+                        "file_path = file_path || '.superseded.' || id::text, "
+                        "source_uri = source_uri || '.superseded.' || id::text, "
+                        "updated_at = now() "
+                        "WHERE project_id = %s AND root_id = %s "
+                        "AND (file_path = %s OR source_uri = %s) "
+                        "AND NOT (id = ANY(%s)) "
+                        "AND NOT EXISTS ("
+                        "SELECT 1 FROM public.project_knowledge k2 "
+                        "WHERE k2.document_id = public.kb_documents.id "
+                        "AND k2.validation_status NOT IN ('deprecated', 'invalidated'))",
+                        (
+                            context.project_id,
+                            context.root_id,
+                            destination_relative,
+                            str(destination),
+                            document_ids,
+                        ),
+                    )
+                    cur.execute(
+                        "UPDATE public.kb_entities "
+                        "SET stable_key = stable_key || ':superseded:' || id::text, "
+                        "updated_at = now() "
+                        f"WHERE project_id = %s AND {entity_owner_sql} "
+                        f"AND stable_key LIKE %s ESCAPE '{LIKE_ESCAPE}'",
+                        (
+                            context.project_id,
+                            *entity_owner_params,
+                            escape_like(destination_prefix) + "%",
+                        ),
+                    )
                 cur.execute(
                     "UPDATE public.kb_documents SET file_path = %s, source_uri = %s, "
                     "updated_at = now() WHERE project_id = %s AND root_id = %s AND id = ANY(%s) RETURNING id",
@@ -3046,14 +3247,26 @@ class RagEngine:
                         )
                 cur.execute(
                     "UPDATE public.entity_evidence SET source_ref = %s, updated_at = now() "
-                    "WHERE project_id = %s AND root_id = %s AND source_ref = %s",
-                    (destination_relative, context.project_id, context.root_id, source_relative),
+                    f"WHERE project_id = %s AND root_id = %s AND source_ref = %s AND {entity_owner_sql}",
+                    (
+                        destination_relative,
+                        context.project_id,
+                        context.root_id,
+                        source_relative,
+                        *entity_owner_params,
+                    ),
                 )
                 entity_evidence_count = cur.rowcount
                 cur.execute(
                     "UPDATE public.relation_evidence SET source_ref = %s, updated_at = now() "
-                    "WHERE project_id = %s AND root_id = %s AND source_ref = %s",
-                    (destination_relative, context.project_id, context.root_id, source_relative),
+                    f"WHERE project_id = %s AND root_id = %s AND source_ref = %s AND {entity_owner_sql}",
+                    (
+                        destination_relative,
+                        context.project_id,
+                        context.root_id,
+                        source_relative,
+                        *entity_owner_params,
+                    ),
                 )
                 relation_evidence_count = cur.rowcount
                 cur.execute(
@@ -3167,21 +3380,21 @@ class RagEngine:
         # Фильтруем системные библиотеки
         mentioned_files = [os.path.basename(f) for f in mentioned_files if not f.startswith('/') or 'antigravity' in f]
 
+        # 1. Сохраняем запуск в векторную память RAG (до захвата соединения из пула)
+        self.save(
+            context=context,
+            content=summary,
+            metadata={
+                "type": "execution_run",
+                "command": command,
+                "exit_code": code,
+                "mentioned_files": mentioned_files
+            }
+        )
+
         conn = self._get_conn()
         error = False
         try:
-            # 1. Сохраняем запуск в векторную память RAG
-            self.save(
-                context=context,
-                content=summary,
-                metadata={
-                    "type": "execution_run",
-                    "command": command,
-                    "exit_code": code,
-                    "mentioned_files": mentioned_files
-                }
-            )
-            
             # 2. Создаём сущность запуска в графе знаний (kb_entities)
             from config import build_entity_stable_key
             run_name = f"run_{int(time.time())}_{argv[0] if argv else 'unknown'}"
@@ -3501,6 +3714,7 @@ class RagEngine:
         status: str = "deprecated",
         reason: str = "",
         superseded_by: int | None = None,
+        file_path: str = "",
     ) -> dict:
         """Retire a stored fact, addressing the row that already exists.
 
@@ -3571,11 +3785,26 @@ class RagEngine:
                 for table in ("entity_evidence", "relation_evidence"):
                     cur.execute(
                         f"UPDATE public.{table} SET validation_status = %s, is_active = false, updated_at = now() "
-                        "WHERE project_id = %s AND root_id = %s AND ("
-                        f"chunk_id IN (SELECT id FROM public.project_knowledge WHERE {evidence_where}) "
-                        f"OR source_ref IN (SELECT file_path FROM public.project_knowledge WHERE {evidence_where}))",
-                        [status, context.project_id, context.root_id, *params, *params],
+                        f"WHERE project_id = %s AND root_id = %s AND ({scope_sql}) "
+                        f"AND chunk_id IN (SELECT id FROM public.project_knowledge WHERE {evidence_where})",
+                        [status, context.project_id, context.root_id, *scope_params, *params],
                     )
+                if file_path:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM public.project_knowledge "
+                        f"WHERE project_id = %s AND root_id = %s AND ({scope_sql}) "
+                        "AND file_path = %s AND validation_status NOT IN ('deprecated', 'invalidated')",
+                        [context.project_id, context.root_id, *scope_params, file_path],
+                    )
+                    count_row = cur.fetchone()
+                    active_for_file = int(count_row[0]) if count_row else 0
+                    if active_for_file == 0:
+                        for table in ("entity_evidence", "relation_evidence"):
+                            cur.execute(
+                                f"UPDATE public.{table} SET validation_status = %s, is_active = false, updated_at = now() "
+                                f"WHERE project_id = %s AND root_id = %s AND ({scope_sql}) AND source_ref = %s",
+                                [status, context.project_id, context.root_id, *scope_params, file_path],
+                            )
             conn.commit()
             if updated:
                 self._invalidate_search_cache(context, connection=conn)
@@ -3888,11 +4117,20 @@ class RagEngine:
             context.project_id
         )
         scope_key = self._search_scope_key(context, limit)
+        workspace_root = (
+            Path(context.project_root)
+            if getattr(context, "ad_hoc", False) and getattr(context, "project_root", "")
+            else None
+        )
         if not generation_known:
             # Neither L1 nor L2 can prove its rows survived a peer's mutation.
-            return self._check_source_versions_with_provenance(context.project_id, self._search_via_persistent_cache(
-                context, query, limit, generation, scope_key, use_shared_tier=False,
-            ))
+            return self._check_source_versions_with_provenance(
+                context.project_id,
+                self._search_via_persistent_cache(
+                    context, query, limit, generation, scope_key, use_shared_tier=False,
+                ),
+                workspace_root=workspace_root,
+            )
         normalized_query = str(query).strip()
         cache_key = (context.project_id, generation, scope_key, normalized_query)
         result, from_local = self._query_cache.get_or_compute(
@@ -3909,15 +4147,31 @@ class RagEngine:
             provenance = dict(result.get("cache") or {})
             provenance["layer"] = "l1"
             result["cache"] = provenance
-        return self._check_source_versions_with_provenance(context.project_id, result)
+        return self._check_source_versions_with_provenance(
+            context.project_id, result, workspace_root=workspace_root
+        )
 
     @staticmethod
-    def _check_source_versions(project_id: str, result: dict, trusted_roots: dict | None = None) -> dict:
+    def _check_source_versions(
+        project_id: str,
+        result: dict,
+        trusted_roots: dict | None = None,
+        *,
+        workspace_root: Path | None = None,
+    ) -> dict:
         if result.get("status") != "success":
             return result
         registry = get_project_registry(settings)
         eligible = []
         workspace_roots = set()
+        if isinstance(workspace_root, Path) and (
+            str(project_id).startswith("ws:")
+            or any(
+                str(hit.get("project_id") or project_id).startswith("ws:")
+                for hit in result.get("results", [])
+            )
+        ):
+            workspace_roots.add(workspace_root)
         ownership_rejected = 0
         for hit in result.get("results", []):
             item = dict(hit)
@@ -3976,7 +4230,13 @@ class RagEngine:
             )
         return result
 
-    def _check_source_versions_with_provenance(self, project_id: str, result: dict) -> dict:
+    def _check_source_versions_with_provenance(
+        self,
+        project_id: str,
+        result: dict,
+        *,
+        workspace_root: Path | None = None,
+    ) -> dict:
         trusted_roots = {}
         registry = get_project_registry(settings)
         if project_id not in registry.project_ids and not project_id.startswith("ws:"):
@@ -3989,7 +4249,9 @@ class RagEngine:
                 except Exception:
                     conn = None
                 if conn is None:
-                    return self._check_source_versions(project_id, result)
+                    return self._check_source_versions(
+                        project_id, result, workspace_root=workspace_root
+                    )
                 error = False
                 try:
                     with conn.cursor() as cur:
@@ -4000,7 +4262,9 @@ class RagEngine:
                     error = True
                 finally:
                     self._put_conn(conn, error=error)
-        initial = self._check_source_versions(project_id, result, trusted_roots)
+        initial = self._check_source_versions(
+            project_id, result, trusted_roots, workspace_root=workspace_root
+        )
         omitted = int(initial.get("unusable_sources_omitted") or 0)
         if initial.get("status") != "success" or omitted == 0:
             return initial
@@ -4057,6 +4321,7 @@ class RagEngine:
             project_id,
             dict(result, results=candidates, unusable_sources_omitted=0),
             trusted_roots,
+            workspace_root=workspace_root,
         )
         recovered_hits = list(recovered.get("results", []))
         accepted.extend(recovered_hits)
@@ -4156,7 +4421,14 @@ class RagEngine:
                 return docs
             raw["results"] = list({h["chunk_id"]: h for h in
                                    raw.get("results", []) + docs.get("results", [])}.values())
-        raw = self._check_source_versions_with_provenance(context.project_id, raw)
+        workspace_root = (
+            Path(context.project_root)
+            if getattr(context, "ad_hoc", False) and getattr(context, "project_root", "")
+            else None
+        )
+        raw = self._check_source_versions_with_provenance(
+            context.project_id, raw, workspace_root=workspace_root
+        )
         try:
             hits = self.evidence_ranker.rank(query, raw.get("results", []), limit, context.min_score)
         except Exception as exc:

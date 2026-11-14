@@ -3,110 +3,92 @@ import importlib.util
 import json
 import os
 import subprocess
+import tarfile
 from pathlib import Path
 
 import pytest
 
 pytestmark = pytest.mark.unit
 
-SPEC = importlib.util.spec_from_file_location(
-    "stage_runtime", Path(__file__).parents[2] / "packaging" / "stage_runtime.py"
-)
-stage_runtime = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(stage_runtime)
 
+def test_build_assets_rewrites_dsc_for_version_bump_and_excludes_audit_dirs(tmp_path, monkeypatch):
+    script_path = Path(__file__).parents[2] / "packaging" / "build_source_assets.py"
+    spec = importlib.util.spec_from_file_location("build_source_assets", script_path)
+    build_source_assets = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(build_source_assets)
 
-def test_relocate_venv_rewrites_shebang_and_removes_build_command(tmp_path):
-    venv = tmp_path / "build" / "venv"
-    script = venv / "bin" / "pip"
-    script.parent.mkdir(parents=True)
-    script.write_text(f"#!{venv}/bin/python\nprint('ok')\n")
-    activate = venv / "bin" / "activate.csh"
-    activate.write_text(f"setenv VIRTUAL_ENV '{venv}'\n")
-    upstream = venv / "lib" / "module.py"
-    upstream.parent.mkdir()
-    upstream.write_text("#!/usr/bin/env/python3\n")
-    cache = venv / "lib" / "__pycache__"
-    cache.mkdir()
-    (cache / "module.cpython-314.pyc").write_bytes(b"bytecode")
-    (venv / ".gitignore").write_text("build-only\n")
-    (venv / "pyvenv.cfg").write_text(
-        "home = /usr/bin\n"
-        f"command = /usr/bin/python3 -m venv {venv}\n"
-        "version = 3.14.4\n"
+    work = tmp_path / "repo"
+    (work / "debian").mkdir(parents=True)
+    (work / "obs").mkdir(parents=True)
+    (work / ".claude").mkdir(parents=True)
+    (work / ".agents").mkdir(parents=True)
+    (work / "artifacts").mkdir(parents=True)
+
+    (work / "debian" / "changelog").write_text(
+        "local-optimize (1.0.2-0ubuntu1) resolute; urgency=medium\n\n  * Bump.\n",
+        encoding="utf-8",
+    )
+    (work / "debian" / "control").write_text("Source: local-optimize\n", encoding="utf-8")
+    (work / "obs" / "base.dsc").write_text(
+        "Format: 3.0 (quilt)\n"
+        "Source: local-optimize\n"
+        "Version: 1.0.1-0ubuntu8\n"
+        "Checksums-Sha1:\n"
+        " 0000000000000000000000000000000000000000 0 local-optimize_1.0.1.orig.tar.gz\n"
+        " 0000000000000000000000000000000000000000 0 local-optimize_1.0.1-0ubuntu8.debian.tar.xz\n"
+        "Checksums-Sha256:\n"
+        " 0000000000000000000000000000000000000000000000000000000000000000 0 local-optimize_1.0.1.orig.tar.gz\n"
+        " 0000000000000000000000000000000000000000000000000000000000000000 0 local-optimize_1.0.1-0ubuntu8.debian.tar.xz\n"
+        "Files:\n"
+        " 00000000000000000000000000000000 0 local-optimize_1.0.1.orig.tar.gz\n"
+        " 00000000000000000000000000000000 0 local-optimize_1.0.1-0ubuntu8.debian.tar.xz\n",
+        encoding="utf-8",
+    )
+    (work / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    (work / ".claude" / "settings.json").write_text("{}\n", encoding="utf-8")
+    (work / ".agents" / "note.md").write_text("# hidden\n", encoding="utf-8")
+    (work / "artifacts" / "leak.txt").write_text("leak\n", encoding="utf-8")
+
+    tracked = [
+        b"app.py",
+        b".claude/settings.json",
+        b".agents/note.md",
+        b"artifacts/leak.txt",
+        b"debian/changelog",
+    ]
+    monkeypatch.chdir(work)
+    monkeypatch.setattr(
+        build_source_assets.subprocess,
+        "check_output",
+        lambda cmd, **_kw: b"\0".join(tracked) + b"\0",
     )
 
-    stage_runtime.relocate_venv(venv, Path("/usr/lib/local-optimize/venv"))
+    out_dir = tmp_path / "out"
+    build_source_assets.build_assets(out_dir)
 
-    assert script.read_text().startswith("#!/usr/lib/local-optimize/venv/bin/python\n")
-    assert activate.read_text() == "setenv VIRTUAL_ENV '/usr/lib/local-optimize/venv'\n"
-    assert upstream.read_text() == "#!/usr/bin/env python3\n"
-    assert not cache.exists()
-    assert not (venv / ".gitignore").exists()
-    config = (venv / "pyvenv.cfg").read_text()
-    assert "command = " not in config
-    assert str(venv) not in config
+    orig = out_dir / "local-optimize_1.0.2.orig.tar.gz"
+    debian_tar = out_dir / "local-optimize_1.0.2-0ubuntu1.debian.tar.xz"
+    dsc = out_dir / "local-optimize_1.0.2-0ubuntu1.dsc"
+    assert orig.is_file()
+    assert debian_tar.is_file()
+    assert dsc.is_file()
 
+    with tarfile.open(orig, "r:gz") as archive:
+        members = set(archive.getnames())
+    assert "local-optimize-1.0.2/app.py" in members
+    assert not any(
+        m.startswith(("local-optimize-1.0.2/.claude", "local-optimize-1.0.2/.agents", "local-optimize-1.0.2/artifacts", "local-optimize-1.0.2/debian"))
+        for m in members
+    )
 
-def test_ollama_staging_copies_only_manifest_dependencies(tmp_path):
-    config = b'{"format":"test"}'
-    layer = b"model weights"
-    config_digest = hashlib.sha256(config).hexdigest()
-    layer_digest = hashlib.sha256(layer).hexdigest()
-    manifest = json.dumps({
-        "config": {"digest": f"sha256:{config_digest}", "size": len(config)},
-        "layers": [{"digest": f"sha256:{layer_digest}", "size": len(layer)}],
-    }).encode()
-    source = tmp_path / "source"
-    relative_manifest = Path("manifests/registry.ollama.ai/library/test/1b")
-    (source / relative_manifest).parent.mkdir(parents=True)
-    (source / relative_manifest).write_bytes(manifest)
-    for digest, payload in ((config_digest, config), (layer_digest, layer)):
-        blob = source / "blobs" / f"sha256-{digest}"
-        blob.parent.mkdir(parents=True, exist_ok=True)
-        blob.write_bytes(payload)
-    unrelated = source / "blobs" / f"sha256-{'0' * 64}"
-    unrelated.write_bytes(b"unrelated")
-    destination = tmp_path / "destination"
-    policy = {"ollama": {
-        "repository": "library/test",
-        "tag": "1b",
-        "manifest_sha256": hashlib.sha256(manifest).hexdigest(),
-    }}
-
-    stage_runtime.stage_ollama_model(destination, policy, source)
-
-    assert (destination / relative_manifest).read_bytes() == manifest
-    assert (destination / "blobs" / f"sha256-{layer_digest}").read_bytes() == layer
-    assert not (destination / unrelated.name).exists()
-
-
-def test_huggingface_staging_excludes_caches_and_onnx(tmp_path):
-    source_root = tmp_path / "source"
-    model = source_root / "models" / "encoder"
-    (model / "onnx").mkdir(parents=True)
-    (model / ".cache").mkdir()
-    (model / "config.json").write_text("{}")
-    (model / "model.safetensors").write_bytes(b"weights")
-    (model / "onnx" / "model.onnx").write_bytes(b"unused")
-    (model / ".cache" / "metadata.json").write_text("{}")
-    destination = tmp_path / "destination"
-    policy = {"models": {"encoder": {
-        "repository": "example/encoder",
-        "revision": "pinned",
-        "required_files": ["config.json", "model.safetensors"],
-    }}}
-
-    stage_runtime.stage_huggingface_models(source_root, destination, policy, tmp_path / "python")
-
-    assert (destination / "encoder" / "model.safetensors").is_file()
-    assert not (destination / "encoder" / "onnx").exists()
-    assert not (destination / "encoder" / ".cache").exists()
-
-
-def test_blob_path_rejects_non_sha256_digest():
-    with pytest.raises(ValueError, match="Invalid Ollama blob digest"):
-        stage_runtime.blob_path("md5:abcd")
+    dsc_text = dsc.read_text(encoding="utf-8")
+    assert "Version: 1.0.2-0ubuntu1\n" in dsc_text
+    for asset in (orig, debian_tar):
+        raw = asset.read_bytes()
+        for algo in ("md5", "sha1", "sha256"):
+            expected = f" {hashlib.new(algo, raw).hexdigest()} {len(raw)} {asset.name}"
+            assert expected in dsc_text
 
 
 

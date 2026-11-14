@@ -11,28 +11,29 @@ Fully hardened:
 - Strict CORS & sanitized error responses
 """
 
+import asyncio
+import contextvars
 import hashlib
 import hmac
-import hashlib
 import json
 import logging
 import os
-import asyncio
-import contextvars
-from concurrent.futures import ThreadPoolExecutor
-from local_inference import correlation_id
+import re
 import sys
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from config import settings
+from local_inference import correlation_id
 from project_context import (
     GlobalKnowledgeContext,
     GlobalWriteContext,
@@ -172,9 +173,20 @@ def _try_initialize_engine(app: FastAPI) -> Any | None:
             return None
 
 
+_AGENT_HEADER_RE = re.compile(r"^[A-Za-z0-9._:-]{2,128}$")
+_SESSION_HEADER_RE = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
+
+
+def _request_id(request: Request) -> str:
+    return getattr(request.state, "request_id", None) or correlation_id()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _mutation_slots
     settings.require_safe_bind(SERVER_HOST)
+    _mutation_slots = asyncio.Semaphore(8)
+    _get_mutation_executor()
     app.state.rag_engine = None
     app.state.engine_error_reason = "RAG engine initialization has not completed"
     app.state.next_engine_retry = 0.0
@@ -190,11 +202,51 @@ async def lifespan(app: FastAPI):
                 engine.close()
             except Exception:
                 log.warning("Error closing RagEngine during shutdown", exc_info=True)
+        with _mutation_executor_lock:
+            _mutation_executor.shutdown(wait=False)
 
 
 _search_slots = threading.BoundedSemaphore(4)
 _search_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="rag-search")
 SEARCH_EXECUTION_TIMEOUT = max(0.01, settings.rag_search_timeout_seconds - 5.0)
+MUTATION_EXECUTION_TIMEOUT = 30.0
+_mutation_slots = asyncio.Semaphore(8)
+_mutation_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="rag-mutation")
+_mutation_executor_lock = threading.Lock()
+
+
+def _get_mutation_executor() -> ThreadPoolExecutor:
+    global _mutation_executor
+    with _mutation_executor_lock:
+        if getattr(_mutation_executor, "_shutdown", False):
+            _mutation_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="rag-mutation")
+        return _mutation_executor
+
+
+async def run_bounded_mutation(function):
+    """Run blocking DB/index mutations in a bounded executor with backpressure."""
+    acquired = False
+    try:
+        await asyncio.wait_for(_mutation_slots.acquire(), timeout=MUTATION_EXECUTION_TIMEOUT)
+        acquired = True
+        loop = asyncio.get_running_loop()
+        executor = _get_mutation_executor()
+        ctx = contextvars.copy_context()
+        return await loop.run_in_executor(executor, ctx.run, function)
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": {
+                    "code": "MUTATION_QUEUE_BUSY",
+                    "message": "Mutation workers are occupied",
+                    "request_id": correlation_id(),
+                }
+            },
+        ) from exc
+    finally:
+        if acquired:
+            _mutation_slots.release()
 
 
 async def run_bounded_search(function):
@@ -237,8 +289,15 @@ app.add_middleware(
     allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-Request-ID", "X-Local-RAG-Session"],
+    allow_headers=[
+        "Content-Type",
+        "Authorization",
+        "X-Request-ID",
+        "X-Local-RAG-Session",
+        "X-Local-RAG-Agent",
+    ],
 )
+
 
 @app.middleware("http")
 async def limit_body_size(request: Request, call_next):
@@ -252,27 +311,66 @@ async def limit_body_size(request: Request, call_next):
         supplied = request.headers.get("authorization", "")
         expected = f"Bearer {configured_token}"
         if not hmac.compare_digest(supplied, expected):
-            return Response(
-                content=json.dumps({"detail": {"error": {"code": "UNAUTHORIZED", "message": "Bearer authentication required"}}}),
+            return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                media_type="application/json",
+                content={
+                    "detail": {
+                        "error": {
+                            "code": "UNAUTHORIZED",
+                            "message": "Bearer authentication required",
+                            "request_id": request_id,
+                        }
+                    }
+                },
+                headers={"X-Request-ID": request_id},
             )
 
-    request.state.agent_id = settings.server_agent_id
+    agent_header = request.headers.get("x-local-rag-agent")
+    if agent_header is not None and not _AGENT_HEADER_RE.match(agent_header):
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={
+                "detail": {
+                    "error": {
+                        "code": "MALFORMED_AGENT",
+                        "message": "Invalid X-Local-RAG-Agent header",
+                        "request_id": request_id,
+                    }
+                }
+            },
+            headers={"X-Request-ID": request_id},
+        )
+
+    request.state.agent_id = agent_header or settings.server_agent_id
     if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         session_id = request.headers.get("x-local-rag-session", "")
         if not session_id:
-            return Response(
-                content=json.dumps({"detail": {"error": {"code": "MISSING_SESSION", "message": "X-Local-RAG-Session header is required for stateful requests"}}}),
+            return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                media_type="application/json",
+                content={
+                    "detail": {
+                        "error": {
+                            "code": "MISSING_SESSION",
+                            "message": "X-Local-RAG-Session header is required for stateful requests",
+                            "request_id": request_id,
+                        }
+                    }
+                },
+                headers={"X-Request-ID": request_id},
             )
-        import re
-        if not re.match(r"^[A-Za-z0-9._:-]{16,128}$", session_id):
-            return Response(
-                content=json.dumps({"detail": {"error": {"code": "MALFORMED_SESSION", "message": "X-Local-RAG-Session header is malformed"}}}),
+        if not _SESSION_HEADER_RE.match(session_id):
+            return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                media_type="application/json",
+                content={
+                    "detail": {
+                        "error": {
+                            "code": "MALFORMED_SESSION",
+                            "message": "X-Local-RAG-Session header is malformed",
+                            "request_id": request_id,
+                        }
+                    }
+                },
+                headers={"X-Request-ID": request_id},
             )
         request.state.session_id = session_id
     else:
@@ -282,29 +380,36 @@ async def limit_body_size(request: Request, call_next):
     if content_length:
         try:
             if int(content_length) > settings.max_request_body_bytes:
-                req_id = str(uuid.uuid4())
-                return Response(
-                    content=json.dumps({
+                return JSONResponse(
+                    status_code=413,
+                    content={
                         "detail": {
                             "error": {
                                 "code": "FILE_TOO_LARGE",
                                 "message": "Request body size exceeds configured maximum",
-                                "request_id": req_id
+                                "request_id": request_id,
                             }
                         }
-                    }),
-                    status_code=413,
-                    media_type="application/json"
+                    },
+                    headers={"X-Request-ID": request_id},
                 )
         except ValueError:
             pass
     if request.method in {"POST", "PUT", "PATCH"}:
         body = await request.body()
         if len(body) > settings.max_request_body_bytes:
-            return Response(
-                content=json.dumps({"detail": {"error": {"code": "FILE_TOO_LARGE", "message": "Request body size exceeds configured maximum"}}}),
+            return JSONResponse(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                media_type="application/json",
+                content={
+                    "detail": {
+                        "error": {
+                            "code": "FILE_TOO_LARGE",
+                            "message": "Request body size exceeds configured maximum",
+                            "request_id": request_id,
+                        }
+                    }
+                },
+                headers={"X-Request-ID": request_id},
             )
     started = time.monotonic()
     response = await call_next(request)
@@ -317,37 +422,37 @@ async def limit_body_size(request: Request, call_next):
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
+    req_id = _request_id(request)
     detail = exc.detail
     if isinstance(detail, dict) and "error" in detail:
         body = {"detail": detail}
     elif isinstance(detail, str):
-        req_id = str(uuid.uuid4())
         body = {"detail": {"error": {"code": "HTTP_ERROR", "message": detail, "request_id": req_id}}}
     else:
         body = {"detail": detail}
-    return Response(
-        content=json.dumps(body),
+    return JSONResponse(
         status_code=exc.status_code,
-        media_type="application/json"
+        content=body,
+        headers={"X-Request-ID": req_id},
     )
 
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
-    req_id = str(uuid.uuid4())
+    req_id = _request_id(request)
     log.error("Unhandled server exception [%s]: %s", req_id, exc, exc_info=True)
-    return Response(
-        content=json.dumps({
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
             "detail": {
                 "error": {
                     "code": "INTERNAL_SERVER_ERROR",
                     "message": "An internal server error occurred",
-                    "request_id": req_id
+                    "request_id": req_id,
                 }
             }
-        }),
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        media_type="application/json"
+        },
+        headers={"X-Request-ID": req_id},
     )
 
 
@@ -1151,7 +1256,7 @@ async def hook_context(
             )
         )
     except Exception as exc:
-        req_id = str(uuid.uuid4())
+        req_id = _request_id(request)
         log.error("Hook context error [%s]: %s", req_id, exc, exc_info=True)
         # A hook must never be the reason a prompt fails. Report the miss.
         return {"status": "unavailable", "injected": False, "text": "", "hashes": []}
@@ -1222,8 +1327,9 @@ def cache_stats(engine: RagEngine = Depends(get_rag_engine)):
 
 
 @app.post("/cache/invalidate")
-def cache_invalidate(
+async def cache_invalidate(
     req: CacheInvalidateRequest,
+    request: Request,
     engine: RagEngine = Depends(get_rag_engine),
 ):
     """Retire cached answers by hand, for when something changed underneath.
@@ -1231,31 +1337,56 @@ def cache_invalidate(
     Routine mutations already invalidate themselves; this is for the cases the
     engine cannot see - a restored dump, a manual UPDATE, a re-embed.
     """
-    project_id = req.project_id or ""
-    removed = (
-        engine._persistent_cache.invalidate_all()
-        + engine._persistent_answer_cache.invalidate_all()
-        if req.purge
-        else 0
-    )
-    generation = None
-    if project_id:
-        generation = engine._persistent_cache.bump_generation(project_id)
-        if hasattr(engine, "_project_cache_generations"):
-            engine._project_cache_generations[project_id] = generation
-        if hasattr(engine, "_project_generation_checked_at"):
-            engine._project_generation_checked_at[project_id] = time.monotonic()
-    elif req.purge:
-        if hasattr(engine, "_project_cache_generations"):
-            engine._project_cache_generations.clear()
-        if hasattr(engine, "_project_generation_checked_at"):
-            engine._project_generation_checked_at.clear()
-    engine._query_cache.invalidate()
-    return {
-        "status": BACKEND_SUCCESS,
-        "generation": generation,
-        "rows_removed": removed,
-    }
+    if hasattr(engine, "invalidate_caches"):
+        result = await run_bounded_mutation(
+            lambda: engine.invalidate_caches(req.project_id, purge=req.purge)
+        )
+        if not isinstance(result, dict) or result.get("status") != BACKEND_SUCCESS:
+            req_id = _request_id(request)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error": {
+                        "code": "CACHE_INVALIDATE_FAILED",
+                        "message": "Failed to invalidate caches",
+                        "request_id": req_id,
+                    }
+                },
+            )
+        return {
+            "status": BACKEND_SUCCESS,
+            "generation": result.get("generation"),
+            "rows_removed": result.get("rows_removed", 0),
+        }
+
+    def _fallback_invalidate():
+        project_id = req.project_id or ""
+        removed = (
+            engine._persistent_cache.invalidate_all()
+            + engine._persistent_answer_cache.invalidate_all()
+            if req.purge
+            else 0
+        )
+        generation = None
+        if project_id:
+            generation = engine._persistent_cache.bump_generation(project_id)
+            if hasattr(engine, "_project_cache_generations"):
+                engine._project_cache_generations[project_id] = generation
+            if hasattr(engine, "_project_generation_checked_at"):
+                engine._project_generation_checked_at[project_id] = time.monotonic()
+        elif req.purge:
+            if hasattr(engine, "_project_cache_generations"):
+                engine._project_cache_generations.clear()
+            if hasattr(engine, "_project_generation_checked_at"):
+                engine._project_generation_checked_at.clear()
+        engine._query_cache.invalidate()
+        return {
+            "status": BACKEND_SUCCESS,
+            "generation": generation,
+            "rows_removed": removed,
+        }
+
+    return await run_bounded_mutation(_fallback_invalidate)
 
 
 @app.post("/save")
@@ -1264,14 +1395,12 @@ async def save(
     request: Request,
     engine: RagEngine = Depends(get_rag_engine)
 ):
-    loop = asyncio.get_running_loop()
     context = req.context.to_context(
         agent_id=request.state.agent_id, session_id=request.state.session_id, allow_rootless=True
     )
 
     try:
-        result = await loop.run_in_executor(
-            None,
+        result = await run_bounded_mutation(
             lambda: engine.save(
                 context=context,
                 content=req.content,
@@ -1288,8 +1417,10 @@ async def save(
         if result.get("status", BACKEND_SUCCESS) not in (BACKEND_SUCCESS, "ok"):
             raise RuntimeError("save backend returned an error status")
         return {**result, "status": BACKEND_SUCCESS}
+    except HTTPException:
+        raise
     except Exception as e:
-        req_id = str(uuid.uuid4())
+        req_id = _request_id(request)
         log.error("Save error [%s]: %s", req_id, e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1307,10 +1438,8 @@ async def deprecate(req: DeprecateRequest, request: Request, engine: RagEngine =
     error to swallow.
     """
     context = req.context.to_context(agent_id=request.state.agent_id, session_id=request.state.session_id, allow_rootless=True)
-    loop = asyncio.get_running_loop()
     try:
-        result = await loop.run_in_executor(
-            None,
+        result = await run_bounded_mutation(
             lambda: engine.deprecate(
                 context,
                 chunk_id=req.chunk_id,
@@ -1320,8 +1449,10 @@ async def deprecate(req: DeprecateRequest, request: Request, engine: RagEngine =
                 superseded_by=req.superseded_by,
             ),
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        req_id = str(uuid.uuid4())
+        req_id = _request_id(request)
         log.error("Deprecate error [%s]: %s", req_id, e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1330,7 +1461,7 @@ async def deprecate(req: DeprecateRequest, request: Request, engine: RagEngine =
     if result.get("status") == "error":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": "DEPRECATE_REJECTED", "message": result.get("message", "Invalid deprecation request")}}
+            detail={"error": {"code": "DEPRECATE_REJECTED", "message": result.get("message", "Invalid deprecation request"), "request_id": _request_id(request)}}
         )
     return {**result, "status": BACKEND_SUCCESS}
 
@@ -1340,10 +1471,8 @@ async def deprecate(req: DeprecateRequest, request: Request, engine: RagEngine =
 async def verify(req: VerifyRequest, request: Request, engine: RagEngine = Depends(get_rag_engine)):
     """Record that a fact was re-confirmed. Reports `updated: 0` when nothing matched."""
     context = req.context.to_context(agent_id=request.state.agent_id, session_id=request.state.session_id, allow_rootless=True)
-    loop = asyncio.get_running_loop()
     try:
-        result = await loop.run_in_executor(
-            None,
+        result = await run_bounded_mutation(
             lambda: engine.verify(
                 context,
                 chunk_id=req.chunk_id,
@@ -1352,8 +1481,10 @@ async def verify(req: VerifyRequest, request: Request, engine: RagEngine = Depen
                 note=req.note,
             ),
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        req_id = str(uuid.uuid4())
+        req_id = _request_id(request)
         log.error("Verify error [%s]: %s", req_id, e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1362,7 +1493,7 @@ async def verify(req: VerifyRequest, request: Request, engine: RagEngine = Depen
     if result.get("status") == "error":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": "VERIFY_REJECTED", "message": result.get("message", "Invalid verification request")}}
+            detail={"error": {"code": "VERIFY_REJECTED", "message": result.get("message", "Invalid verification request"), "request_id": _request_id(request)}}
         )
     return {**result, "status": BACKEND_SUCCESS}
 
@@ -1386,8 +1517,10 @@ async def stale_report(req: StaleReportRequest, request: Request, engine: RagEng
         if result.get("status") != "success":
             raise RuntimeError("staleness backend returned an error status")
         return {**result, "status": BACKEND_SUCCESS}
+    except HTTPException:
+        raise
     except Exception as e:
-        req_id = str(uuid.uuid4())
+        req_id = _request_id(request)
         log.error("Stale report error [%s]: %s", req_id, e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1399,11 +1532,10 @@ async def stale_report(req: StaleReportRequest, request: Request, engine: RagEng
 @app.post("/index")
 async def index_code(req: IndexRequest, request: Request, engine: RagEngine = Depends(get_rag_engine)):
     context = req.context.to_context(agent_id=request.state.agent_id, session_id=request.state.session_id)
-    valid_path = context.validate_path(req.path, must_exist=True)
-    loop = asyncio.get_running_loop()
     try:
-        result = await loop.run_in_executor(
-            None, lambda: engine.index_code(context, str(valid_path))
+        valid_path = context.validate_path(req.path, must_exist=True)
+        result = await run_bounded_mutation(
+            lambda: engine.index_code(context, str(valid_path))
         )
         raw_status = result.get("status", BACKEND_SUCCESS)
         if raw_status not in (BACKEND_SUCCESS, "ok", "partial", "fallback_success"):
@@ -1414,8 +1546,20 @@ async def index_code(req: IndexRequest, request: Request, engine: RagEngine = De
             "index_mode": raw_status,
             "completed": raw_status in (BACKEND_SUCCESS, "ok", "fallback_success"),
         }
+    except HTTPException:
+        raise
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "PATH_NOT_FOUND", "message": "Requested file does not exist", "request_id": _request_id(request)}},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": "INVALID_PATH", "message": "Path validation failed", "request_id": _request_id(request)}},
+        ) from exc
     except Exception as e:
-        req_id = str(uuid.uuid4())
+        req_id = _request_id(request)
         log.error("Index code error [%s]: %s", req_id, e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1426,17 +1570,28 @@ async def index_code(req: IndexRequest, request: Request, engine: RagEngine = De
 @app.post("/index_document")
 async def index_document(req: IndexRequest, request: Request, engine: RagEngine = Depends(get_rag_engine)):
     context = req.context.to_context(agent_id=request.state.agent_id, session_id=request.state.session_id)
-    valid_path = context.validate_path(req.path, must_exist=True)
-    loop = asyncio.get_running_loop()
     try:
-        result = await loop.run_in_executor(
-            None, lambda: engine.index_document(context, str(valid_path))
+        valid_path = context.validate_path(req.path, must_exist=True)
+        result = await run_bounded_mutation(
+            lambda: engine.index_document(context, str(valid_path))
         )
         if result.get("status", BACKEND_SUCCESS) not in (BACKEND_SUCCESS, "ok"):
             raise RuntimeError("index backend returned an error status")
         return {**result, "status": BACKEND_SUCCESS}
+    except HTTPException:
+        raise
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "PATH_NOT_FOUND", "message": "Requested file does not exist", "request_id": _request_id(request)}},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": "INVALID_PATH", "message": "Path validation failed", "request_id": _request_id(request)}},
+        ) from exc
     except Exception as e:
-        req_id = str(uuid.uuid4())
+        req_id = _request_id(request)
         log.error("Index document error [%s]: %s", req_id, e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1447,17 +1602,28 @@ async def index_document(req: IndexRequest, request: Request, engine: RagEngine 
 @app.post("/delete_document")
 async def delete_document(req: DeleteRequest, request: Request, engine: RagEngine = Depends(get_rag_engine)):
     context = req.context.to_context(agent_id=request.state.agent_id, session_id=request.state.session_id)
-    valid_path = context.validate_path(req.path, must_exist=False)
-    loop = asyncio.get_running_loop()
     try:
-        result = await loop.run_in_executor(
-            None, lambda: engine.delete_document(context, str(valid_path))
+        valid_path = context.validate_path(req.path, must_exist=False)
+        result = await run_bounded_mutation(
+            lambda: engine.delete_document(context, str(valid_path))
         )
         if result.get("status", BACKEND_SUCCESS) not in (BACKEND_SUCCESS, "ok"):
             raise RuntimeError("delete backend returned an error status")
         return {**result, "status": BACKEND_SUCCESS}
+    except HTTPException:
+        raise
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "PATH_NOT_FOUND", "message": "Requested file does not exist", "request_id": _request_id(request)}},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": "INVALID_PATH", "message": "Path validation failed", "request_id": _request_id(request)}},
+        ) from exc
     except Exception as e:
-        req_id = str(uuid.uuid4())
+        req_id = _request_id(request)
         log.error("Delete document error [%s]: %s", req_id, e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1468,25 +1634,34 @@ async def delete_document(req: DeleteRequest, request: Request, engine: RagEngin
 @app.post("/move_document")
 async def move_document(req: MoveRequest, request: Request, engine: RagEngine = Depends(get_rag_engine)):
     context = req.context.to_context(agent_id=request.state.agent_id, session_id=request.state.session_id)
-    source = context.validate_path(req.source_path, must_exist=False)
-    destination = context.validate_path(req.destination_path, must_exist=True)
-    loop = asyncio.get_running_loop()
     try:
-        result = await loop.run_in_executor(
-            None, lambda: engine.move_document(context, str(source), str(destination))
+        source = context.validate_path(req.source_path, must_exist=False)
+        destination = context.validate_path(req.destination_path, must_exist=True)
+        result = await run_bounded_mutation(
+            lambda: engine.move_document(context, str(source), str(destination))
         )
         if result.get("status", BACKEND_SUCCESS) not in (BACKEND_SUCCESS, "ok"):
             raise RuntimeError("move backend returned an error status")
         if result.get("moved_count", 0) < 1:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail={"error": {"code": "MOVE_NOT_APPLIED", "message": "Document move was not applied"}},
+                detail={"error": {"code": "MOVE_NOT_APPLIED", "message": "Document move was not applied", "request_id": _request_id(request)}},
             )
         return {**result, "status": BACKEND_SUCCESS}
     except HTTPException:
         raise
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "PATH_NOT_FOUND", "message": "Requested file does not exist", "request_id": _request_id(request)}},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": "INVALID_PATH", "message": "Path validation failed", "request_id": _request_id(request)}},
+        ) from exc
     except Exception:
-        req_id = str(uuid.uuid4())
+        req_id = _request_id(request)
         log.error("Move document error [%s]", req_id, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1496,21 +1671,22 @@ async def move_document(req: MoveRequest, request: Request, engine: RagEngine = 
 
 @app.post("/feedback")
 async def feedback(req: FeedbackRequest, request: Request, engine: RagEngine = Depends(get_rag_engine)):
-    loop = asyncio.get_running_loop()
     try:
         context = req.context.to_context(
             agent_id=request.state.agent_id, session_id=request.state.session_id
         )
-        result = await loop.run_in_executor(
-            None, lambda: engine.log_feedback(
+        result = await run_bounded_mutation(
+            lambda: engine.log_feedback(
                 context, req.feedback_type, req.query, req.correction
             )
         )
         if result.get("status", BACKEND_SUCCESS) not in (BACKEND_SUCCESS, "ok"):
             raise RuntimeError("feedback backend returned an error status")
         return {**result, "status": BACKEND_SUCCESS}
+    except HTTPException:
+        raise
     except Exception as e:
-        req_id = str(uuid.uuid4())
+        req_id = _request_id(request)
         log.error("Feedback error [%s]: %s", req_id, e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1520,19 +1696,22 @@ async def feedback(req: FeedbackRequest, request: Request, engine: RagEngine = D
 
 @app.post("/consolidate")
 async def consolidate(req: ConsolidateRequest, request: Request, engine: RagEngine = Depends(get_rag_engine)):
-    loop = asyncio.get_running_loop()
     try:
         context = req.context.to_context(
             agent_id=request.state.agent_id, session_id=request.state.session_id
         )
-        result = await loop.run_in_executor(
-            None, lambda: engine.consolidate_episodic_to_semantic(
+        result = await run_bounded_mutation(
+            lambda: engine.consolidate(
                 context, decay_days=req.decay_days, min_importance=req.min_importance
             )
         )
+        if result.get("status", BACKEND_SUCCESS) not in (BACKEND_SUCCESS, "ok"):
+            raise RuntimeError("consolidate backend returned an error status")
         return {**result, "status": BACKEND_SUCCESS}
+    except HTTPException:
+        raise
     except Exception as e:
-        req_id = str(uuid.uuid4())
+        req_id = _request_id(request)
         log.error("Consolidate error [%s]: %s", req_id, e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1543,7 +1722,6 @@ async def consolidate(req: ConsolidateRequest, request: Request, engine: RagEngi
 @app.post("/memory_optimize")
 @app.post("/memory-optimize")
 async def memory_optimize(req: MemoryOptimizeRequest, request: Request, engine: RagEngine = Depends(get_rag_engine)):
-    loop = asyncio.get_running_loop()
     try:
         context = req.context.to_context(
             agent_id=request.state.agent_id, session_id=request.state.session_id
@@ -1551,12 +1729,14 @@ async def memory_optimize(req: MemoryOptimizeRequest, request: Request, engine: 
         kwargs = {"sim_threshold": req.sim_threshold}
         if req.apply:
             kwargs["apply"] = True
-        result = await loop.run_in_executor(
-            None, lambda: engine.memory_optimize(context, **kwargs)
+        result = await run_bounded_mutation(
+            lambda: engine.memory_optimize(context, **kwargs)
         )
         return {**result, "status": BACKEND_SUCCESS}
+    except HTTPException:
+        raise
     except Exception as e:
-        req_id = str(uuid.uuid4())
+        req_id = _request_id(request)
         log.error("Memory optimize error [%s]: %s", req_id, e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1567,7 +1747,7 @@ async def memory_optimize(req: MemoryOptimizeRequest, request: Request, engine: 
 if __name__ == "__main__":
     import uvicorn
     settings.require_safe_bind(SERVER_HOST)
-    log.info("🚀 GPU RAG Memory Server starting on %s:%d", SERVER_HOST, SERVER_PORT)
+    log.info("GPU RAG Memory Server starting on %s:%d", SERVER_HOST, SERVER_PORT)
     access_log = os.getenv("UVICORN_ACCESS_LOG", "0").lower() in {"1", "true", "yes", "on"}
     uvicorn.run(
         "gpu_rag_server:app",

@@ -42,12 +42,13 @@ rotate_db_backups() {
             rm -f -- "${old_file}"
         fi
     done < <(
-        find "${backup_dir}" -maxdepth 1 -type f -name "${db_name}_*.dump" -printf '%T@\t%p\0' \
+        find "${backup_dir}" -maxdepth 1 -type f -name "${db_name}_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]_*.dump" -printf '%T@\t%p\0' \
             | sort -z -rn -k1,1
     )
 }
 
 main() {
+    export LC_ALL=C
     umask 077
 
     local backup_dir="${1:-${BACKUP_DIR:-/var/backups/local-optimize/postgres}}"
@@ -57,9 +58,14 @@ main() {
     local backup_date=""
     local -a databases=()
 
-    if [[ ! "${retention_days}" =~ ^[0-9]+$ ]] || [[ ! "${max_backups_per_db}" =~ ^[0-9]+$ ]]; then
-        echo "Ошибка: RETENTION_DAYS и MAX_BACKUPS_PER_DB должны быть целыми неотрицательными числами." >&2
+    if [[ ! "${retention_days}" =~ ^[0-9]+$ ]] || [[ ! "${max_backups_per_db}" =~ ^[0-9]+$ ]] || (( retention_days < 1 || max_backups_per_db < 1 )); then
+        echo "Ошибка: RETENTION_DAYS и MAX_BACKUPS_PER_DB должны быть целыми положительными числами (>= 1)." >&2
         exit 2
+    fi
+
+    if [[ -L "${backup_dir}" ]]; then
+        echo "Ошибка: директория резервных копий не должна быть символической ссылкой: ${backup_dir}" >&2
+        exit 1
     fi
 
     lock_file="$(resolve_lock_file)"
@@ -80,7 +86,7 @@ main() {
     chmod 0700 "${backup_dir}"
 
     mapfile -t databases < <(
-        psql -tAc "SELECT datname FROM pg_database WHERE datname NOT IN ('template0', 'template1') AND datistemplate = false;"
+        psql -w -tAc "SELECT datname FROM pg_database WHERE datname NOT IN ('template0', 'template1') AND datistemplate = false;"
     )
 
     if (( ${#databases[@]} == 0 )); then
@@ -105,7 +111,7 @@ main() {
         chmod 0600 "${temp_file}"
 
         echo "Резервное копирование БД: ${db} -> ${backup_file}" >&2
-        pg_dump -Fc -- "${db}" > "${temp_file}"
+        pg_dump -w -Fc -- "${db}" > "${temp_file}"
         if [[ ! -s "${temp_file}" ]] || ! pg_restore --list "${temp_file}" >/dev/null; then
             echo "Ошибка: проверка резервной копии БД ${db} не пройдена." >&2
             exit 1

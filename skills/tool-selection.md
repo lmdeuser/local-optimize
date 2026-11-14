@@ -25,4 +25,3 @@ Guide effective tool choice and execution, prioritizing built-in utilities, targ
 - Browser interaction: use the browser route designated by the host, not an assumed external automation dependency.
 
 Prefer the smallest tool that can produce decisive evidence. Do not replace a direct file read with semantic search or a documentation lookup with model recollection.
-

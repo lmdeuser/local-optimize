@@ -12,4 +12,4 @@ override_dh_installsystemduser:
 
 override_dh_fixperms:
 	dh_fixperms
-	find debian/local-optimize/usr/lib/local-optimize -type f -name '*.py' -exec grep -l '^#!' {} + | xargs -r chmod +x
+	find debian/local-optimize/usr/lib/local-optimize -type f \( -name '*.py' -o -name '*.sh' \) -exec grep -l '^#!' {} + | xargs -r chmod +x

@@ -43,7 +43,7 @@
 | `project_context.py` | Модель безопасности и реестр проектов (`ProjectRegistry`, `ProjectContext`, `ProjectDefinition`). Контролирует границы путей (`validate_path()`), области видимости (`WriteVisibility`, `ReadScope`) и статус верификации (`ValidationStatus`). |
 | `skills_manager.py` | Менеджер каталога инженерных навыков. Строгая валидация манифеста (`manifest.json`), LRU-кэш сессий с TTL (`SessionSkillsManager`), защита от path traversal и синхронизация скиллов с IDE. |
 | `watchdog_indexer.py` | Фоновый сервис автоматической индексации изменений файловой системы на базе библиотеки `watchdog`. Обрабатывает события create, modify, delete и атомарный move с дебаунсом (1 сек). |
-| `mcp_config_generator.py` | Генератор конфигурационных файлов MCP для поддерживаемых сред: Cursor, Antigravity, Gemini, OpenCode, Kimi, VSCode/Cline, Claude Desktop. Атомарное обновление с бэкапом и защитой сторонних записей. |
+| `mcp_config_generator.py` | Генератор конфигурационных файлов MCP для поддерживаемых сред: Cursor, Antigravity, Gemini, OpenCode, Kimi, VSCode/Cline, Claude Desktop (fail-closed блокировка cloud-capable клиентов), LM Studio (`--lmstudio`) и очистка cloud-конфигов (`--prune-cloud-clients`). Атомарное обновление с бэкапом и защитой сторонних записей. |
 | `migration_runner.py` | Движок версионированных миграций базы данных PostgreSQL с использованием advisory locks, SHA-256 контрольных сумм и сверки инвариантов схемы (`verify_runtime_schema()`). |
 | `create_schema.py` | Утилита инициализации и наката полной схемы БД через `MigrationRunner`. |
 | `install_central_system.py` | Централизованный 8-фазный инсталлятор системы (preflight → backup → secrets → DB → migrations → MCP configs → systemd → health verification). |
@@ -55,7 +55,7 @@
 | `reembed_corpus.py` | Скрипт перерасчета и обновления векторных эмбеддингов корпуса при смене модели без изменения текстового контента. |
 | `rag_benchmark.py` | Фреймворк бенчмаркинга качества RAG-поиска по эталонному датасету (Gold Dataset). |
 | `postgres_backup.sh` | Shell-скрипт резервного копирования PostgreSQL c блокировкой `flock`, дампом `pg_dump -Fc` и ротацией бэкапов. |
-| `migrations/` | Директория версионированных SQL-миграций схемы (файлы `0001_*.sql` — `0015_*.sql`) и `manifest.json`; v13 и v15 обязательны, v14 с локальным answer cache необязательна. |
+| `migrations/` | Директория версионированных SQL-миграций схемы (файлы `0001_*.sql` — `0016_*.sql`) и `manifest.json`; v13, v15 и v16 обязательны, v14 с локальным answer cache необязательна. |
 | `models/` | Локальные копии/веса моделей эмбеддингов (`multilingual-e5-small`, `all-MiniLM-L6-v2`, `paraphrase-multilingual-MiniLM-L12-v2`). |
 | `skills/` | Первичный канонический каталог 39 инженерных навыков Markdown и `manifest.json`. |
 | `refactored-agent-skills/` | Вспомогательный репозиторий с модульными версиями скиллов и документацией. |
@@ -73,7 +73,7 @@
 2. **Обработка в MCP-сервере (`mcp_server.py`)**:
    Сервер распаковывает аргументы, формирует объект корреляции (`correlation_id`, `agent_id`, `session_id`) и конструирует `ProjectContext` с указанием `project_id`, `root_id`, `write_visibility` и `read_scope`. Для сетевого взаимодействия вызывается экземпляр `RagClient`.
 3. **HTTP-клиент (`rag_client.py`)**:
-   `RagClient` сериализует запрос в JSON, проверяет размер тела запроса (`MAX_REQUEST_BODY_BYTES`), проставляет заголовки `X-Local-RAG-Session` и `Authorization: Bearer <token>`, после чего выполняет POST-запрос к FastAPI серверу (`gpu_rag_server.py`).
+   `RagClient` сериализует запрос в JSON, проверяет размер тела запроса (`MAX_REQUEST_BODY_BYTES`), проставляет заголовки `X-Local-RAG-Agent`, `X-Local-RAG-Session` и `Authorization: Bearer <token>`, после чего выполняет POST-запрос к FastAPI серверу (`gpu_rag_server.py`).
 4. **FastAPI Шлюз (`gpu_rag_server.py`)**:
    - Middleware `limit_body_size` проверяет объем входящих данных.
    - Эндпоинт (например, `/search`) валидирует Pydantic-схему `SearchRequest`.
@@ -256,7 +256,7 @@ MCP-сервер (`mcp_server.py`, имя сервера `local-rag`) экспо
 
 Управление схемой базы данных полностью изолировано внутри `migration_runner.py`:
 
-- **Принцип работы**: Файлы миграций расположены в `migrations/0001_baseline.sql` — `0015_root_scoped_stable_keys.sql` и зарегистрированы в `migrations/manifest.json`. Движок `RagEngine` работает строго в режиме read-only и никогда не применяет DDL на лету. Обязательные v13 и v15 добавляют query cache/generation counters и изоляцию `stable_key`/`provenance` по `root_id`; необязательная v14 добавляет validated local answer cache.
+- **Принцип работы**: Файлы миграций расположены в `migrations/0001_baseline.sql` — `migrations/0016_strict_owner_and_document_root_scope.sql` и зарегистрированы в `migrations/manifest.json`. Движок `RagEngine` работает строго в режиме read-only и никогда не применяет DDL на лету. Обязательные v13, v15 и v16 добавляют query cache/generation counters, изоляцию `stable_key`/`provenance` по `root_id`, непустые owner-ограничения и `kb_documents_project_root_source_unique`; необязательная v14 добавляет validated local answer cache.
 - **Блокировки и транзакционность**: Перед анализом и выполнением миграций берется стабильный сессионный PostgreSQL advisory lock с ограниченным таймаутом. Каждая миграция и запись в таблице `schema_migrations` фиксируются в одной транзакции (`commit`).
 - **Обработка сбоев (Committed Boundary)**: При ошибке транзакция текущей миграции откатывается (`rollback`), а ранее зафиксированные версии объявляются неизменной границей. Деструктивные откаты в БД автоматически не выполняются.
 - **Сверка легаси-схем (`reconcile_legacy`)**: Если таблица существовала до появления манифеста контрольных сумм, строка получает статус `legacy-unverified`. Метод выполняет проверку всех инвариантов (таблицы, колонки, индексы, внешние ключи) и только при полном совпадении проставляет SHA-256.
@@ -346,8 +346,8 @@ python3 -m pytest -q -m systemd
    - Вспомогательная функция `_index_document_without_chunking()` не имеет активных потребителей.
 5. **Безопасный режим оптимизации памяти**:
    - Функция `memory_optimize()` работает в режиме `safe-no-delete` (`deleted` всегда 0): она находит и возвращает список семантических дубликатов, но не удаляет их автоматически во избежание потери контекста.
-6. **Особенности интеграции с OpenCode**:
-   - В версиях OpenCode конфигурация MCP считывается из `~/.config/opencode/opencode.json` под ключом `"mcp"`. Генератор `mcp_config_generator.py` формирует файл `mcp.json` для обратной совместимости, поэтому для работы в OpenCode требуется ручное слияние секции `local-rag`.
+6. **Поведение MCP-генератора для cloud-capable клиентов (`mcp_config_generator.py`)**:
+   - Генератор отклоняет регистрацию полного `local-rag` для cloud-capable клиентов (fail-closed в `_owned_entry`), но сохраняет флаг `--prune-cloud-clients` для очистки ранее записанных секций `local-rag` / `local_rag` и поддерживает отдельную настройку local-only LM Studio (`--lmstudio`, `lmstudio_rag_mcp.py`). Для legacy-совместимости OpenCode ранее использовал `mcp.json`, тогда как актуальный OpenCode читает `opencode.json` под ключом `"mcp"`.
 7. **Зависимости в `requirements.txt`**:
    - В зависимостях присутствуют библиотеки `transformers` и `sentence-transformers`, в то время как основной путь загрузки модели использует оптимизированную загрузку через SentenceTransformer на Intel XPU.
 8. **Языковая специфика промптов роутера**:

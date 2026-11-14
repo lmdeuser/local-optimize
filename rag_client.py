@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import urllib.error
 import urllib.request
+from collections import OrderedDict
 from typing import Any
 
 from config import settings
@@ -24,6 +26,16 @@ RequestContext = ProjectContext | KnowledgeContext | WorkingDirectoryContext | G
 log = logging.getLogger("rag_client")
 
 CANONICAL_STATUSES = frozenset({"success", "error", "unavailable"})
+MAX_INJECTED_HASHES = 2048
+_AGENT_HEADER_RE = re.compile(r"^[A-Za-z0-9._:-]{2,128}$")
+_STDLIB_URLOPEN = urllib.request.urlopen
+_DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _open_url(request: urllib.request.Request, *, timeout: float):
+    if urllib.request.urlopen is _STDLIB_URLOPEN:
+        return _DIRECT_OPENER.open(request, timeout=timeout)
+    return urllib.request.urlopen(request, timeout=timeout)
 
 
 class RagProtocolError(RuntimeError):
@@ -42,8 +54,31 @@ class RagClient:
         self.context = context
         self.model_name = model_name
         self.server_url = server_url or settings.rag_server_url
-        self._injected_hashes: set[tuple[tuple[Any, ...], str]] = set()
+        self._injected_hashes: OrderedDict[tuple[tuple[Any, ...], str], None] = OrderedDict()
         self._ctx_tokens_used = 0
+
+    def _record_injected_hash(self, search_scope: tuple[Any, ...], content_hash: str) -> None:
+        key = (search_scope, content_hash)
+        if key in self._injected_hashes:
+            self._injected_hashes.move_to_end(key)
+            return
+        self._injected_hashes[key] = None
+        while len(self._injected_hashes) > MAX_INJECTED_HASHES:
+            self._injected_hashes.popitem(last=False)
+
+    def _resolve_agent_header(self, agent_id: Any = None) -> str | None:
+        if agent_id is not None:
+            candidate = agent_id
+        elif hasattr(self, "agent_id"):
+            candidate = self.agent_id
+        else:
+            ctx = getattr(self, "context", None)
+            candidate = getattr(ctx, "agent_id", "") if ctx is not None else ""
+        if isinstance(candidate, str):
+            stripped = candidate.strip()
+            if _AGENT_HEADER_RE.match(stripped):
+                return stripped
+        return None
 
     @staticmethod
     def _require_range(name: str, value: int, minimum: int, maximum: int) -> int:
@@ -102,7 +137,7 @@ class RagClient:
         )
         for chunk in result.get("results", []):
             if chunk.get("content_hash"):
-                self._injected_hashes.add((search_scope, chunk["content_hash"]))
+                self._record_injected_hash(search_scope, chunk["content_hash"])
         return result
 
     def lookup_local_answer(
@@ -185,7 +220,7 @@ class RagClient:
         )
         for chunk in result.get("results", []):
             if chunk.get("content_hash"):
-                self._injected_hashes.add((search_scope, chunk["content_hash"]))
+                self._record_injected_hash(search_scope, chunk["content_hash"])
         return result
 
     def save(
@@ -346,6 +381,7 @@ class RagClient:
         session_id: str = "",
         *,
         timeout: float = 30.0,
+        agent_id: Any = None,
     ) -> dict:
         url = self.server_url.rstrip("/") + endpoint
         encoded = json.dumps(payload).encode("utf-8")
@@ -354,6 +390,9 @@ class RagClient:
         headers = {"Content-Type": "application/json", "X-Request-ID": correlation_id()}
         if session_id:
             headers["X-Local-RAG-Session"] = session_id
+        agent_header = self._resolve_agent_header(agent_id)
+        if agent_header:
+            headers["X-Local-RAG-Agent"] = agent_header
         token = settings.bearer_token.get_secret_value()
         if token:
             headers["Authorization"] = f"Bearer {token}"
@@ -364,7 +403,7 @@ class RagClient:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with _open_url(request, timeout=timeout) as response:
                 return self._validate_response(endpoint, response.read())
         except urllib.error.HTTPError as exc:
             # Do not echo response bodies: upstream errors may contain sensitive data.
@@ -431,13 +470,16 @@ class RagClient:
     def _get(self, endpoint: str) -> dict:
         try:
             headers = {}
+            agent_header = self._resolve_agent_header()
+            if agent_header:
+                headers["X-Local-RAG-Agent"] = agent_header
             token = settings.bearer_token.get_secret_value()
             if token:
                 headers["Authorization"] = f"Bearer {token}"
             request = urllib.request.Request(
                 self.server_url.rstrip("/") + endpoint, headers=headers
             )
-            with urllib.request.urlopen(request, timeout=5) as response:
+            with _open_url(request, timeout=5) as response:
                 return self._validate_response(endpoint, response.read())
         except urllib.error.HTTPError as exc:
             backend_status = "unavailable" if exc.code == 503 else "error"

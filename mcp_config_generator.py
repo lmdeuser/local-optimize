@@ -19,6 +19,7 @@ from config import settings
 PROJECT_ROOT = settings.project_root.resolve()
 PYTHON_EXEC = sys.executable
 MCP_SERVER_SCRIPT = str(PROJECT_ROOT / "mcp_server.py")
+LMSTUDIO_MCP_SCRIPT = str(PROJECT_ROOT / "lmstudio_rag_mcp.py")
 CANONICAL_SERVER_NAME = "local-rag"
 LEGACY_SERVER_NAME = "local_rag"
 
@@ -117,16 +118,25 @@ def _owned_entry(*, transport: bool = False, opencode: bool = False) -> dict[str
     )
 
 
+def _lmstudio_entry() -> dict[str, Any]:
+    return {"command": PYTHON_EXEC, "args": [LMSTUDIO_MCP_SCRIPT]}
+
+
 def _is_owned_legacy_entry(entry: Any) -> bool:
     if not isinstance(entry, dict):
         return False
     args = entry.get("args")
-    return (
-        isinstance(args, list)
-        and len(args) == 1
-        and Path(str(args[0])).resolve() == Path(MCP_SERVER_SCRIPT).resolve()
-        and isinstance(entry.get("command"), str)
-    )
+    if not isinstance(args, list) or len(args) != 1 or not isinstance(entry.get("command"), str):
+        return False
+    try:
+        target = Path(str(args[0])).resolve()
+    except OSError:
+        return False
+    owned_scripts = {
+        Path(MCP_SERVER_SCRIPT).resolve(),
+        Path(LMSTUDIO_MCP_SCRIPT).resolve(),
+    }
+    return target in owned_scripts
 
 
 def merge_owned_server(existing: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]:
@@ -263,8 +273,8 @@ def build_opencode_mcp_config(
     if not dry_run and target_paths:
         import sys
         print(
-            "⚠  OpenCode reads MCP servers from opencode.json (not mcp.json).\n"
-            "   Merge local-rag manually into ~/.config/opencode/opencode.json under 'mcp'.",
+            "Warning: OpenCode reads MCP servers from opencode.json (not mcp.json).\n"
+            "Merge local-rag manually into ~/.config/opencode/opencode.json under 'mcp'.",
             file=sys.stderr,
         )
     return result
@@ -326,11 +336,71 @@ def build_claude_mcp_config(
     return _build_many([Path(path) for path in target_paths], _owned_entry(), dry_run, backup)
 
 
+def build_lmstudio_mcp_config(
+    target_path: Path | None = None, dry_run: bool = False, backup: bool = True
+) -> dict[str, Any]:
+    path = Path(target_path) if target_path else Path.home() / ".lmstudio" / "mcp.json"
+    return _build(path, _lmstudio_entry(), dry_run, backup)
+
+
+def _cloud_client_mcp_paths() -> list[Path]:
+    home = Path.home()
+    return [
+        home / ".cursor" / "mcp.json",
+        home / ".antigravity" / "mcp_config.json",
+        home / ".gemini" / "mcp.json",
+        home / ".gemini" / "antigravity" / "mcp_config.json",
+        home / ".config" / "opencode" / "mcp.json",
+        home / ".opencode" / "mcp.json",
+        home / ".mimocode" / "mcp.json",
+        home / ".config" / "mimocode" / "mcp.json",
+        home / ".config" / "cagent" / "mcp.json",
+        home / ".cagent" / "mcp.json",
+        home / ".kimi-code" / "mcp.json",
+        home / ".config" / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json",
+        home / ".config" / "Code" / "User" / "globalStorage" / "rooveterinaryinc.roo-cline" / "settings" / "cline_mcp_settings.json",
+        home / ".claude" / "mcp.json",
+        home / ".config" / "Claude" / "claude_desktop_config.json",
+    ]
+
+
+def prune_cloud_client_configs(
+    paths: list[Path] | None = None, *, dry_run: bool = False, backup: bool = True
+) -> dict[str, list[str]]:
+    pruned: dict[str, list[str]] = {}
+    for candidate in (paths if paths is not None else _cloud_client_mcp_paths()):
+        file_path = Path(candidate)
+        if not file_path.is_file():
+            continue
+        data = load_existing_json(file_path)
+        servers = data.get("mcpServers")
+        if not isinstance(servers, dict):
+            continue
+        removed = [
+            key
+            for key in (CANONICAL_SERVER_NAME, LEGACY_SERVER_NAME)
+            if key in servers and _is_owned_legacy_entry(servers[key])
+        ]
+        if not removed:
+            continue
+        if not dry_run:
+            updated = copy.deepcopy(data)
+            for key in removed:
+                del updated["mcpServers"][key]
+            atomic_write_json(file_path, updated, backup=backup)
+        pruned[str(file_path)] = removed
+    return pruned
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate local_optimize MCP entries")
     parser.add_argument(
-        "--client", choices=["cursor", "antigravity", "gemini", "opencode", "mimocode", "cagent", "kimi", "vscode", "claude", "all"], default="all"
+        "--client",
+        choices=["cursor", "antigravity", "gemini", "opencode", "mimocode", "cagent", "kimi", "vscode", "claude", "lmstudio", "all"],
+        default=None,
     )
+    parser.add_argument("--lmstudio", action="store_true", help="Write local-only LM Studio MCP config")
+    parser.add_argument("--prune-cloud-clients", action="store_true", help="Remove owned local-rag entries from cloud client configs")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-backup", action="store_true")
     args = parser.parse_args()
@@ -345,8 +415,23 @@ def main() -> int:
         "kimi": build_kimi_mcp_config,
         "vscode": build_vscode_mcp_config,
         "claude": build_claude_mcp_config,
+        "lmstudio": build_lmstudio_mcp_config,
     }
-    selected = builders if args.client == "all" else {args.client: builders[args.client]}
+    if args.prune_cloud_clients:
+        try:
+            prune_cloud_client_configs(dry_run=args.dry_run, backup=not args.no_backup)
+        except Exception as exc:
+            print(f"[Error] cloud MCP cleanup failed: {exc}", file=sys.stderr)
+            return 1
+
+    if args.lmstudio and args.client is None:
+        selected = {"lmstudio": build_lmstudio_mcp_config}
+    elif args.prune_cloud_clients and args.client is None:
+        selected = {}
+    else:
+        target_client = args.client or "all"
+        selected = builders if target_client == "all" else {target_client: builders[target_client]}
+
     for name, builder in selected.items():
         try:
             builder(dry_run=args.dry_run, backup=not args.no_backup)

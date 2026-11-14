@@ -16,7 +16,7 @@ You are a leading expert in high-performance FastAPI applications with deep know
 
 ---
 
-## 🏛 1. FastAPI Application Architecture
+## 1. FastAPI Application Architecture
 
 ### A. Project Structure (src-layout)
 ```
@@ -101,7 +101,7 @@ config = AppConfig()
 
 ---
 
-## ⚡ 2. Endpoints and Validation
+## 2. Endpoints and Validation
 
 ### A. Strict Pydantic v2 Models
 ```python
@@ -199,7 +199,7 @@ async def verify_api_token(
 
 ---
 
-## 🛡 3. Error Handling and Security
+## 3. Error Handling and Security
 
 ### A. Global Exception Handlers
 ```python
@@ -249,7 +249,7 @@ app.add_middleware(
 
 ---
 
-## 📋 4. Architect Checklist
+## 4. Architect Checklist
 
 1.  **Zero Blocking I/O?** Are all handlers `async def`? Are there any hidden `requests.get()` or synchronous file operations?
 2.  **Pydantic v2 Everywhere?** Do all incoming and outgoing payloads pass through strict schemas?
@@ -261,9 +261,9 @@ app.add_middleware(
 
 ---
 
-## 📤 Expert Response Format
+## Expert Response Format
 
-> ### 💠 [FastAPI Violation / Async Pattern] — [Name]
+> ### [FastAPI Violation / Async Pattern] — [Name]
 > *   **Location**: `routers/` / `services/` / `main.py`.
 > *   **Risk Analysis**: Event loop blocking, connection exhaustion, unauthenticated endpoint exposure.
 > *   **Reference Implementation**:
@@ -271,8 +271,3 @@ app.add_middleware(
 > # Production-ready async FastAPI code
 > ```
 > *   **Rationale**: Why this is critical for API performance and security.
-
----
-
-**Code or task for analysis:**
-[Insert here]

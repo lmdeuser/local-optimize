@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import os
 import tempfile
@@ -15,11 +16,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 OUTPUT_PATH = PROJECT_ROOT.parent / "local_optimize_reviewed.zip"
 
 EXCLUDED_PARTS = {
+    ".agents",
+    ".claude",
     ".git",
     ".mimocode",
     ".cursor",
     ".vscode",
     ".idea",
+    "artifacts",
     "node_modules",
     "__pycache__",
     ".pytest_cache",
@@ -43,9 +47,8 @@ EXCLUDED_SUFFIXES = {".pyc", ".pyo", ".zip", ".log", ".coverage"}
 ALLOWED_DIRECTORIES = {"debian", "docs", "evaluation", "hooks", "migrations", "obs", "packaging", "skills", "tests"}
 ALLOWED_SUPPORT_FILES = {
     "deploy/intel-xpu-requirements.txt",
-    "runtime/manifest.json",
+    "packaging/runtime-policy.json",
     "runtime/requirements.lock",
-    "runtime/split-manifest.json",
 }
 ALLOWED_ROOT_FILES = {
     ".gitignore",
@@ -182,4 +185,7 @@ def build_archive(output_path: Path = OUTPUT_PATH) -> Path:
 
 
 if __name__ == "__main__":
-    print(build_archive())
+    parser = argparse.ArgumentParser(description="Build verified minimal reviewed zip archive.")
+    parser.add_argument("--output", type=Path, default=OUTPUT_PATH)
+    args = parser.parse_args()
+    print(build_archive(args.output))

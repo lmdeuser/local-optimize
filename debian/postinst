@@ -3,7 +3,7 @@ set -e
 
 #DEBHELPER#
 
-case "$1" in
+case "${1:-}" in
     configure)
         if [ -n "${2:-}" ] && dpkg --compare-versions "$2" lt "1.0.1-0ubuntu6"; then
             rm -rf /usr/lib/local-optimize/venv /usr/lib/local-optimize/models
@@ -14,16 +14,33 @@ case "$1" in
             /var/lib/local-optimize/models \
             /var/cache/local-optimize \
             /var/cache/local-optimize/pip
+        export PYTHONDONTWRITEBYTECODE=1
         python3 /usr/lib/local-optimize/runtime_sync.py sync
+        for unit in gpu-rag-server.service watchdog-indexer.service; do
+            link="/etc/systemd/user/default.target.wants/$unit"
+            target="/usr/lib/systemd/user/$unit"
+            if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then
+                rm -f "$link"
+            fi
+        done
+        if [ -n "${2:-}" ] && command -v runuser >/dev/null 2>&1; then
+            for runtime_dir in /run/user/*; do
+                [ -d "$runtime_dir/systemd" ] && [ ! -L "$runtime_dir" ] || continue
+                uid=${runtime_dir#/run/user/}
+                case "$uid" in
+                    ''|*[!0-9]*) continue ;;
+                esac
+                [ "$uid" -ge 1000 ] || continue
+                [ "$(stat -c '%u' "$runtime_dir" 2>/dev/null || echo -1)" = "$uid" ] || continue
+                user_row=$(getent passwd "$uid" 2>/dev/null || true)
+                user_name=${user_row%%:*}
+                user_home=$(printf '%s\n' "$user_row" | cut -d: -f6)
+                [ -n "$user_name" ] && [ -n "$user_home" ] || continue
+                runuser -u "$user_name" -- env HOME="$user_home" USER="$user_name" LOGNAME="$user_name" XDG_RUNTIME_DIR="$runtime_dir" systemctl --user daemon-reload >/dev/null 2>&1 || true
+                runuser -u "$user_name" -- env HOME="$user_home" USER="$user_name" LOGNAME="$user_name" XDG_RUNTIME_DIR="$runtime_dir" systemctl --user try-restart gpu-rag-server.service watchdog-indexer.service >/dev/null 2>&1 || true
+            done
+        fi
         ;;
 esac
-
-for unit in gpu-rag-server.service watchdog-indexer.service; do
-    link="/etc/systemd/user/default.target.wants/$unit"
-    target="/usr/lib/systemd/user/$unit"
-    if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then
-        rm -f "$link"
-    fi
-done
 
 exit 0
