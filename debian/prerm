@@ -1,0 +1,59 @@
+#!/bin/sh
+set -e
+
+run_user_systemctl() {
+    rus_user=$1
+    rus_home=$2
+    rus_runtime=$3
+    shift 3
+    if [ -S "$rus_runtime/bus" ]; then
+        runuser -u "$rus_user" -- env \
+            HOME="$rus_home" \
+            USER="$rus_user" \
+            LOGNAME="$rus_user" \
+            XDG_RUNTIME_DIR="$rus_runtime" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=$rus_runtime/bus" \
+            systemctl --user "$@"
+    else
+        runuser -u "$rus_user" -- env \
+            HOME="$rus_home" \
+            USER="$rus_user" \
+            LOGNAME="$rus_user" \
+            XDG_RUNTIME_DIR="$rus_runtime" \
+            systemctl --user "$@"
+    fi
+}
+
+case "${1:-}" in
+    remove|deconfigure)
+        if [ -z "${DPKG_ROOT:-}" ] && command -v runuser >/dev/null 2>&1; then
+            for runtime_dir in /run/user/*; do
+                [ -d "$runtime_dir/systemd" ] && [ ! -L "$runtime_dir" ] || continue
+                uid=${runtime_dir#/run/user/}
+                case "$uid" in
+                    ''|*[!0-9]*) continue ;;
+                esac
+                [ "$uid" -ge 1000 ] || continue
+                [ "$(stat -c '%u' "$runtime_dir" 2>/dev/null || printf '%s' '-1')" = "$uid" ] || continue
+                user_row=$(getent passwd "$uid" 2>/dev/null || true)
+                user_name=${user_row%%:*}
+                user_home=$(printf '%s\n' "$user_row" | cut -d: -f6)
+                [ -n "$user_name" ] && [ -n "$user_home" ] || continue
+                for unit in watchdog-indexer.service gpu-rag-server.service; do
+                    unit_state=$(run_user_systemctl "$user_name" "$user_home" "$runtime_dir" show -P ActiveState "$unit" 2>/dev/null || true)
+                    case "$unit_state" in
+                        active|activating|reloading)
+                            if ! run_user_systemctl "$user_name" "$user_home" "$runtime_dir" stop "$unit" >/dev/null; then
+                                printf 'local-optimize: warning: failed to stop %s for %s during package removal\n' "$unit" "$user_name" >&2
+                            fi
+                            ;;
+                    esac
+                done
+            done
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

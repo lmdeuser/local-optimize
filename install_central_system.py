@@ -248,15 +248,22 @@ def phase_mcp_config(context: InstallationContext, clients: Sequence[str]) -> Ph
 
 
 def _unit_content(name: str) -> bytes:
-    script = "gpu_rag_server.py" if name == "gpu-rag-server" else "watchdog_indexer.py"
-    after = " gpu-rag-server.service" if name == "watchdog-indexer" else ""
+    is_server = name == "gpu-rag-server"
+    script = "gpu_rag_server.py" if is_server else "watchdog_indexer.py"
+    after = "" if is_server else " gpu-rag-server.service"
+    wants_line = "" if is_server else "Wants=gpu-rag-server.service\n"
+    service_type_block = (
+        "Type=notify\nNotifyAccess=main\nTimeoutStartSec=180\nTimeoutStopSec=30"
+        if is_server
+        else "Type=exec\nTimeoutStopSec=20"
+    )
     secrets = Path.home() / ".config" / "local-optimize" / "secrets.env"
     return f"""[Unit]
 Description={name} for local_optimize
 After=network.target postgresql.service{after}
-
+{wants_line}
 [Service]
-Type=simple
+{service_type_block}
 WorkingDirectory={BASE_DIR}
 ExecStartPre=/usr/bin/test -f {secrets}
 ExecStart={sys.executable} {BASE_DIR / script}

@@ -3,6 +3,82 @@ set -e
 
 #DEBHELPER#
 
+run_user_systemctl() {
+    rus_user=$1
+    rus_home=$2
+    rus_runtime=$3
+    shift 3
+    if [ -S "$rus_runtime/bus" ]; then
+        runuser -u "$rus_user" -- env \
+            HOME="$rus_home" \
+            USER="$rus_user" \
+            LOGNAME="$rus_user" \
+            XDG_RUNTIME_DIR="$rus_runtime" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=$rus_runtime/bus" \
+            systemctl --user "$@"
+    else
+        runuser -u "$rus_user" -- env \
+            HOME="$rus_home" \
+            USER="$rus_user" \
+            LOGNAME="$rus_user" \
+            XDG_RUNTIME_DIR="$rus_runtime" \
+            systemctl --user "$@"
+    fi
+}
+
+resolve_user_runtime() {
+    rur_dir=$1
+    [ -d "$rur_dir/systemd" ] && [ ! -L "$rur_dir" ] || return 1
+    rur_uid=${rur_dir#/run/user/}
+    case "$rur_uid" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$rur_uid" -ge 1000 ] || return 1
+    [ "$(stat -c '%u' "$rur_dir" 2>/dev/null || printf '%s' '-1')" = "$rur_uid" ] || return 1
+    rur_row=$(getent passwd "$rur_uid" 2>/dev/null || true)
+    SESSION_USER=${rur_row%%:*}
+    SESSION_HOME=$(printf '%s\n' "$rur_row" | cut -d: -f6)
+    [ -n "$SESSION_USER" ] && [ -n "$SESSION_HOME" ] || return 1
+    return 0
+}
+
+ACTIVE_SERVER_RUNTIMES=""
+ACTIVE_WATCHDOG_RUNTIMES=""
+SYNC_COMPLETED=0
+
+runtime_in_list() {
+    ril_list=$1
+    ril_item=$2
+    case "
+$ril_list
+" in
+        *"
+$ril_item
+"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+reload_and_restart_recorded_services() {
+    [ -z "${DPKG_ROOT:-}" ] && command -v runuser >/dev/null 2>&1 || return 0
+    for runtime_dir in /run/user/*; do
+        resolve_user_runtime "$runtime_dir" || continue
+        if ! run_user_systemctl "$SESSION_USER" "$SESSION_HOME" "$runtime_dir" daemon-reload >/dev/null; then
+            printf 'local-optimize: warning: systemctl --user daemon-reload failed for %s\n' "$SESSION_USER" >&2
+        fi
+        if runtime_in_list "$ACTIVE_SERVER_RUNTIMES" "$runtime_dir"; then
+            if ! run_user_systemctl "$SESSION_USER" "$SESSION_HOME" "$runtime_dir" start gpu-rag-server.service >/dev/null; then
+                printf 'local-optimize: warning: failed to start gpu-rag-server.service for %s (check: systemctl --user status gpu-rag-server.service)\n' "$SESSION_USER" >&2
+            fi
+        fi
+        if runtime_in_list "$ACTIVE_WATCHDOG_RUNTIMES" "$runtime_dir"; then
+            if ! run_user_systemctl "$SESSION_USER" "$SESSION_HOME" "$runtime_dir" start watchdog-indexer.service >/dev/null; then
+                printf 'local-optimize: warning: failed to start watchdog-indexer.service for %s (check: systemctl --user status watchdog-indexer.service)\n' "$SESSION_USER" >&2
+            fi
+        fi
+    done
+}
+
 case "${1:-}" in
     configure)
         if [ -n "${2:-}" ] && dpkg --compare-versions "$2" lt "1.0.1-0ubuntu6"; then
@@ -14,8 +90,6 @@ case "${1:-}" in
             /var/lib/local-optimize/models \
             /var/cache/local-optimize \
             /var/cache/local-optimize/pip
-        export PYTHONDONTWRITEBYTECODE=1
-        python3 /usr/lib/local-optimize/runtime_sync.py sync
         for unit in gpu-rag-server.service watchdog-indexer.service; do
             link="/etc/systemd/user/default.target.wants/$unit"
             target="/usr/lib/systemd/user/$unit"
@@ -23,23 +97,37 @@ case "${1:-}" in
                 rm -f "$link"
             fi
         done
-        if [ -n "${2:-}" ] && command -v runuser >/dev/null 2>&1; then
+        if [ -n "${2:-}" ] && [ -z "${DPKG_ROOT:-}" ] && command -v runuser >/dev/null 2>&1; then
             for runtime_dir in /run/user/*; do
-                [ -d "$runtime_dir/systemd" ] && [ ! -L "$runtime_dir" ] || continue
-                uid=${runtime_dir#/run/user/}
-                case "$uid" in
-                    ''|*[!0-9]*) continue ;;
+                resolve_user_runtime "$runtime_dir" || continue
+                wd_state=$(run_user_systemctl "$SESSION_USER" "$SESSION_HOME" "$runtime_dir" show -P ActiveState watchdog-indexer.service 2>/dev/null || true)
+                case "$wd_state" in
+                    active|activating|reloading)
+                        ACTIVE_WATCHDOG_RUNTIMES="${ACTIVE_WATCHDOG_RUNTIMES}${ACTIVE_WATCHDOG_RUNTIMES:+
+}${runtime_dir}"
+                        if ! run_user_systemctl "$SESSION_USER" "$SESSION_HOME" "$runtime_dir" stop watchdog-indexer.service >/dev/null; then
+                            printf 'local-optimize: warning: failed to stop watchdog-indexer.service for %s before runtime sync\n' "$SESSION_USER" >&2
+                        fi
+                        ;;
                 esac
-                [ "$uid" -ge 1000 ] || continue
-                [ "$(stat -c '%u' "$runtime_dir" 2>/dev/null || echo -1)" = "$uid" ] || continue
-                user_row=$(getent passwd "$uid" 2>/dev/null || true)
-                user_name=${user_row%%:*}
-                user_home=$(printf '%s\n' "$user_row" | cut -d: -f6)
-                [ -n "$user_name" ] && [ -n "$user_home" ] || continue
-                runuser -u "$user_name" -- env HOME="$user_home" USER="$user_name" LOGNAME="$user_name" XDG_RUNTIME_DIR="$runtime_dir" systemctl --user daemon-reload >/dev/null 2>&1 || true
-                runuser -u "$user_name" -- env HOME="$user_home" USER="$user_name" LOGNAME="$user_name" XDG_RUNTIME_DIR="$runtime_dir" systemctl --user try-restart gpu-rag-server.service watchdog-indexer.service >/dev/null 2>&1 || true
+                srv_state=$(run_user_systemctl "$SESSION_USER" "$SESSION_HOME" "$runtime_dir" show -P ActiveState gpu-rag-server.service 2>/dev/null || true)
+                case "$srv_state" in
+                    active|activating|reloading)
+                        ACTIVE_SERVER_RUNTIMES="${ACTIVE_SERVER_RUNTIMES}${ACTIVE_SERVER_RUNTIMES:+
+}${runtime_dir}"
+                        if ! run_user_systemctl "$SESSION_USER" "$SESSION_HOME" "$runtime_dir" stop gpu-rag-server.service >/dev/null; then
+                            printf 'local-optimize: warning: failed to stop gpu-rag-server.service for %s before runtime sync\n' "$SESSION_USER" >&2
+                        fi
+                        ;;
+                esac
             done
         fi
+        trap 'if [ "$SYNC_COMPLETED" -eq 0 ]; then reload_and_restart_recorded_services; fi' EXIT
+        export PYTHONDONTWRITEBYTECODE=1
+        python3 /usr/lib/local-optimize/runtime_sync.py sync
+        SYNC_COMPLETED=1
+        trap - EXIT
+        reload_and_restart_recorded_services
         ;;
 esac
 

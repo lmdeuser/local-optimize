@@ -1,3 +1,11 @@
+local-optimize (1.0.1-0ubuntu10) resolute; urgency=medium
+
+  * Expose MCP enum schemas and classify invalid client context as INVALID_CONTEXT.
+  * Notify systemd readiness after loopback bind and drain watchdog queue on SIGTERM.
+  * Stop active user services before runtime sync on upgrade and during package removal.
+
+ -- Local Optimize contributors <28979718+lmdeuser@users.noreply.github.com>  Sun, 15 Nov 2026 13:28:00 +0500
+
 local-optimize (1.0.1-0ubuntu9) resolute; urgency=medium
 
   * Enforce strict root_id and owner scoping across schema v16, GraphRAG, and caches.

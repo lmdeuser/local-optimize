@@ -3,10 +3,11 @@
 
 import logging
 import os
+import signal
 import sys
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from indexer_queue import CODE_EXTENSIONS, DOCUMENT_EXTENSIONS, IGNORED_DIRS, IndexQueue
 from watchdog.events import (
@@ -317,6 +318,8 @@ class WatchdogSupervisor:
         while not self._stop.is_set():
             processed = False
             for indexer in list(self.indexers.values()):
+                if self._stop.is_set():
+                    break
                 try:
                     processed = indexer.queue.process_next() or processed
                 except Exception as exc:
@@ -334,12 +337,25 @@ class WatchdogSupervisor:
         self._worker.start()
 
     def run(self) -> None:
-        self.start()
+        previous_handlers: dict[int, Any] = {}
+        if threading.current_thread() is threading.main_thread():
+            def _handle_stop_signal(signum: int, _frame: object) -> None:
+                logger.info("Received signal %s; stopping watchdog cleanly", signum)
+                self._stop.set()
+
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                previous_handlers[sig] = signal.getsignal(sig)
+                signal.signal(sig, _handle_stop_signal)
         try:
+            self.start()
             while not self._stop.wait(self.reconcile_interval):
                 self.reconcile_registry()
         finally:
-            self.close()
+            try:
+                self.close()
+            finally:
+                for sig, handler in previous_handlers.items():
+                    signal.signal(sig, handler)
 
     def close(self) -> None:
         self._stop.set()

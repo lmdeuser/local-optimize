@@ -231,3 +231,75 @@ def test_index_project_codebase_handles_extensions_symlinks_foreign_roots_and_ex
 
     monkeypatch.setattr(index_project_codebase, "RagEngine", AllOkEngine)
     assert index_project_codebase.main() == 0
+
+
+def test_gpu_rag_server_sd_notify_delivers_datagram_and_ignores_unset(monkeypatch):
+    import socket
+    import tempfile
+    import gpu_rag_server
+
+    monkeypatch.delenv("NOTIFY_SOCKET", raising=False)
+    assert gpu_rag_server._sd_notify("READY=1") is False
+
+    with tempfile.TemporaryDirectory(prefix="lo-sd-") as sock_dir:
+        sock_path = str(Path(sock_dir) / "notify.sock")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as server_sock:
+            server_sock.bind(sock_path)
+            server_sock.settimeout(2.0)
+            monkeypatch.setenv("NOTIFY_SOCKET", sock_path)
+            assert gpu_rag_server._sd_notify("READY=1\nSTATUS=Ready on loopback") is True
+            assert server_sock.recv(256) == b"READY=1\nSTATUS=Ready on loopback"
+
+
+def test_systemd_units_and_maintainer_scripts_enforce_notify_and_clean_lifecycle():
+    import shutil
+
+    repo_root = Path(__file__).parents[2]
+    server_unit = (repo_root / "packaging" / "systemd" / "gpu-rag-server.service").read_text(encoding="utf-8")
+    watchdog_unit = (repo_root / "packaging" / "systemd" / "watchdog-indexer.service").read_text(encoding="utf-8")
+
+    assert "Type=notify\n" in server_unit
+    assert "NotifyAccess=main\n" in server_unit
+    assert "TimeoutStartSec=180\n" in server_unit
+    assert "ExecStartPre=/usr/bin/local-optimize migrate\n" in server_unit
+
+    assert "Type=exec\n" in watchdog_unit
+    assert "After=network.target gpu-rag-server.service\n" in watchdog_unit
+    assert "Wants=gpu-rag-server.service\n" in watchdog_unit
+
+    for script_name in ("postinst", "prerm", "postrm", "preinst"):
+        script_path = repo_root / "debian" / script_name
+        assert script_path.stat().st_mode & 0o111, f"{script_name} must be executable"
+        if script_name in {"postinst", "prerm", "postrm"}:
+            assert "#DEBHELPER#" in script_path.read_text(encoding="utf-8")
+        res = subprocess.run(["sh", "-n", str(script_path)], capture_output=True, text=True, check=False)
+        assert res.returncode == 0, res.stderr
+        if shutil.which("dash"):
+            dash_res = subprocess.run(["dash", "-n", str(script_path)], capture_output=True, text=True, check=False)
+            assert dash_res.returncode == 0, dash_res.stderr
+        if shutil.which("checkbashisms"):
+            cb_res = subprocess.run(["checkbashisms", str(script_path)], capture_output=True, text=True, check=False)
+            assert cb_res.returncode == 0, cb_res.stdout + cb_res.stderr
+
+    postinst_text = (repo_root / "debian" / "postinst").read_text(encoding="utf-8")
+    reload_def = postinst_text.index("reload_and_restart_recorded_services()")
+    configure_pos = postinst_text.index("case \"${1:-}\" in")
+    reload_body = postinst_text[reload_def:configure_pos]
+    daemon_reload = reload_body.index("daemon-reload")
+    start_srv = reload_body.index("start gpu-rag-server.service")
+    start_wd = reload_body.index("start watchdog-indexer.service")
+    assert daemon_reload < start_srv < start_wd
+
+    configure_body = postinst_text[configure_pos:]
+    stop_wd = configure_body.index("stop watchdog-indexer.service")
+    stop_srv = configure_body.index("stop gpu-rag-server.service")
+    sync_pos = configure_body.index("runtime_sync.py sync")
+    restart_call = configure_body.rindex("reload_and_restart_recorded_services")
+    assert stop_wd < stop_srv < sync_pos < restart_call
+    assert "DBUS_SESSION_BUS_ADDRESS" in postinst_text
+    assert ">&2" in postinst_text
+
+    prerm_text = (repo_root / "debian" / "prerm").read_text(encoding="utf-8")
+    assert "remove|deconfigure)" in prerm_text
+    assert "ActiveState" in prerm_text
+    assert "watchdog-indexer.service gpu-rag-server.service" in prerm_text

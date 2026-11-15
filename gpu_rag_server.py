@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import socket
 import sys
 import threading
 import time
@@ -1746,15 +1747,59 @@ async def memory_optimize(req: MemoryOptimizeRequest, request: Request, engine: 
         )
 
 
-if __name__ == "__main__":
+def _sd_notify(state: str) -> bool:
+    """Send a service-state datagram to systemd NOTIFY_SOCKET when present."""
+    notify_socket = os.getenv("NOTIFY_SOCKET", "").strip()
+    if not notify_socket:
+        return False
+    if notify_socket.startswith("@"):
+        target: str | bytes = b"\0" + notify_socket[1:].encode("utf-8")
+    elif notify_socket.startswith("/"):
+        target = notify_socket
+    else:
+        return False
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+            sock.sendto(state.encode("utf-8"), target)
+        return True
+    except OSError:
+        log.debug("Failed to send sd_notify state", exc_info=True)
+        return False
+
+
+def run_server() -> None:
     import uvicorn
+
+    class _SystemdNotifyServer(uvicorn.Server):
+        async def startup(self, sockets: list[socket.socket] | None = None) -> None:
+            await super().startup(sockets=sockets)
+            if self.started:
+                ready_note = (
+                    "Ready on loopback"
+                    if getattr(app.state, "rag_engine", None) is not None
+                    else "Listening on loopback (engine initialization pending)"
+                )
+                _sd_notify(f"READY=1\nSTATUS={ready_note}")
+
+        async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
+            _sd_notify("STOPPING=1\nSTATUS=Shutting down")
+            await super().shutdown(sockets=sockets)
+
     settings.require_safe_bind(SERVER_HOST)
     log.info("GPU RAG Memory Server starting on %s:%d", SERVER_HOST, SERVER_PORT)
     access_log = os.getenv("UVICORN_ACCESS_LOG", "0").lower() in {"1", "true", "yes", "on"}
-    uvicorn.run(
-        "gpu_rag_server:app",
+    config = uvicorn.Config(
+        app,
         host=SERVER_HOST,
         port=SERVER_PORT,
         log_level="info",
         access_log=access_log,
     )
+    server = _SystemdNotifyServer(config=config)
+    server.run()
+    if not server.started:
+        raise SystemExit(3)
+
+
+if __name__ == "__main__":
+    run_server()

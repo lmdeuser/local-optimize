@@ -3,7 +3,10 @@ Description=Local Optimize RAG server
 After=network.target
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=180
+TimeoutStopSec=30
 WorkingDirectory=/usr/lib/local-optimize
 ExecStartPre=/usr/bin/test -f %h/.config/local-optimize/secrets.env
 ExecStartPre=/usr/bin/local-optimize migrate

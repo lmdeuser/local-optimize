@@ -4,7 +4,8 @@ After=network.target gpu-rag-server.service
 Wants=gpu-rag-server.service
 
 [Service]
-Type=simple
+Type=exec
+TimeoutStopSec=20
 WorkingDirectory=/usr/lib/local-optimize
 ExecStartPre=/usr/bin/test -f %h/.config/local-optimize/secrets.env
 EnvironmentFile=%h/.config/local-optimize/secrets.env

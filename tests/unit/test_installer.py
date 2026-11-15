@@ -357,3 +357,12 @@ def test_verification_stops_after_bounded_liveness_failures(tmp_path, monkeypatc
     assert result.status == "failed"
     assert result.details == "Liveness contract failed"
     assert calls == ["/liveness"] * 30
+
+
+def test_installer_unit_content_uses_notify_for_server_and_exec_for_watchdog():
+    server_unit = installer._unit_content("gpu-rag-server")
+    watchdog_unit = installer._unit_content("watchdog-indexer")
+
+    assert b"Type=notify\nNotifyAccess=main\nTimeoutStartSec=180" in server_unit
+    assert b"Type=exec\nTimeoutStopSec=20" in watchdog_unit
+    assert b"Wants=gpu-rag-server.service" in watchdog_unit

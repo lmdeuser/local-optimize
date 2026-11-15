@@ -131,3 +131,51 @@ def test_watchdog_subdir_watches_schedules_only_named_subdirs(tmp_path, monkeypa
         assert not handles[0].is_recursive
     finally:
         supervisor.close()
+
+
+def test_watchdog_run_drains_inflight_work_on_sigterm_and_restores_handlers(tmp_path, monkeypatch):
+    import os
+    import signal
+    import threading
+    import time
+    import watchdog_indexer
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    registry = ProjectRegistry([ProjectDefinition("proj", "Proj", {"primary": root})])
+    monkeypatch.setattr(watchdog_indexer, "get_project_registry", lambda _settings: registry)
+
+    supervisor = watchdog_indexer.WatchdogSupervisor(reconcile_interval=30.0)
+    monkeypatch.setattr(supervisor, "reconcile_registry", lambda: None)
+
+    in_flight = threading.Event()
+    drained = threading.Event()
+
+    class FakeQueue:
+        def process_next(self):
+            if not in_flight.is_set():
+                in_flight.set()
+                time.sleep(0.08)
+                drained.set()
+            return False
+
+        def close(self):
+            return None
+
+    supervisor.indexers[("proj", "primary")] = type("FakeIndexer", (), {"queue": FakeQueue()})()
+
+    def send_sigterm():
+        assert in_flight.wait(timeout=2.0)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    killer = threading.Thread(target=send_sigterm, daemon=True)
+    orig_term = signal.getsignal(signal.SIGTERM)
+    orig_int = signal.getsignal(signal.SIGINT)
+    killer.start()
+    supervisor.run()
+    killer.join(timeout=2.0)
+
+    assert drained.is_set()
+    assert not supervisor._started
+    assert signal.getsignal(signal.SIGTERM) == orig_term
+    assert signal.getsignal(signal.SIGINT) == orig_int
