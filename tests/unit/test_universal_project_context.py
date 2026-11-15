@@ -263,3 +263,93 @@ async def test_mcp_mutation_reports_unknown_explicit_project(monkeypatch):
     ))
     assert result["code"] == "UNKNOWN_PROJECT"
     assert result["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_mcp_rag_save_reports_invalid_context_instead_of_save_error(tmp_path, monkeypatch):
+    import json
+    import mcp_server
+
+    called = []
+
+    class UnexpectedClient:
+        def __init__(self, *_args, **_kwargs):
+            called.append(True)
+
+    monkeypatch.setattr(mcp_server, "RagClient", UnexpectedClient)
+
+    bad_wd_status = json.loads(await mcp_server.rag_save(
+        "long enough isolated content",
+        working_directory=str(tmp_path),
+        validation_status="verified",
+    ))
+    assert bad_wd_status["status"] == "error"
+    assert bad_wd_status["code"] == "INVALID_CONTEXT"
+    assert "ValidationStatus" in bad_wd_status["error"]
+
+    bad_global_status = json.loads(await mcp_server.rag_save(
+        "long enough isolated content",
+        validation_status="verified",
+    ))
+    assert bad_global_status["status"] == "error"
+    assert bad_global_status["code"] == "INVALID_CONTEXT"
+
+    bad_global_visibility = json.loads(await mcp_server.rag_save(
+        "long enough isolated content",
+        write_visibility="private",
+    ))
+    assert bad_global_visibility["status"] == "error"
+    assert bad_global_visibility["code"] == "INVALID_CONTEXT"
+
+    combined_selector = json.loads(await mcp_server.rag_save(
+        "long enough isolated content",
+        project_id="AmneziaVPN",
+        working_directory=str(tmp_path),
+    ))
+    assert combined_selector["status"] == "error"
+    assert combined_selector["code"] == "INVALID_CONTEXT"
+    assert "working_directory" in combined_selector["error"]
+
+    global_with_file = json.loads(await mcp_server.rag_save(
+        "long enough isolated content",
+        file_path="src/main.py",
+    ))
+    assert global_with_file["status"] == "error"
+    assert global_with_file["code"] == "INVALID_CONTEXT"
+    assert called == []
+
+
+@pytest.mark.asyncio
+async def test_mcp_route_query_reports_invalid_read_scope_as_context_fallback():
+    import json
+    import mcp_server
+
+    result = json.loads(await mcp_server.route_query_tool(
+        "fixture question",
+        read_scope="invalid",
+    ))
+    assert result["status"] == "error"
+    assert result["code"] == "INVALID_CONTEXT"
+    assert result["phase"] == "context"
+    assert result["route"] == "fallback"
+
+
+@pytest.mark.asyncio
+async def test_mcp_rag_save_schema_exposes_enum_values():
+    import mcp_server
+
+    tools = {tool.name: tool for tool in await mcp_server.mcp.list_tools()}
+    props = tools["rag_save"].inputSchema["properties"]
+    assert props["validation_status"]["enum"] == [
+        "unverified",
+        "validated",
+        "authoritative",
+        "deprecated",
+        "invalidated",
+    ]
+    assert props["write_visibility"]["enum"] == [
+        "public",
+        "shared",
+        "agent-private",
+        "session-private",
+    ]

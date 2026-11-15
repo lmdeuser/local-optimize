@@ -1419,6 +1419,8 @@ async def save(
         return {**result, "status": BACKEND_SUCCESS}
     except HTTPException:
         raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as e:
         req_id = _request_id(request)
         log.error("Save error [%s]: %s", req_id, e, exc_info=True)

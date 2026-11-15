@@ -94,7 +94,9 @@ def test_http_accepts_unregistered_workspace(registry, tmp_path, monkeypatch):
 
 def test_http_global_save_does_not_authorize_file_indexing(registry, monkeypatch):
     class Engine(SearchEngine):
-        def save(self, context, **_kwargs):
+        def save(self, context, **kwargs):
+            if kwargs.get("file_path"):
+                raise ValueError("Global knowledge cannot refer to a filesystem source")
             self.calls.append(context.project_id)
             return {"status": "success"}
 
@@ -105,10 +107,16 @@ def test_http_global_save_does_not_authorize_file_indexing(registry, monkeypatch
     try:
         with TestClient(app) as client:
             saved = client.post("/save", json={"context": {}, "content": "A rootless knowledge fixture"}, headers=headers)
+            rejected_file = client.post(
+                "/save",
+                json={"context": {}, "content": "A rootless knowledge fixture", "file_path": "src/main.py"},
+                headers=headers,
+            )
             indexed = client.post("/index_code", json={"context": {}, "path": "/etc/passwd"}, headers=headers)
     finally:
         app.dependency_overrides.clear()
     assert saved.status_code == 200
+    assert rejected_file.status_code == 422
     assert engine.calls == ["__global_knowledge__"]
     assert indexed.status_code == 422
 

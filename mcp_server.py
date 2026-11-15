@@ -75,6 +75,12 @@ from skills_manager import load_manifest, safe_skills_path, session_skills_manag
 
 DEFAULT_PROJECT_ID = ""
 DEFAULT_ROOT_ID = ""
+WriteVisibilityParam = Literal["public", "shared", "agent-private", "session-private"]
+ReadScopeParam = Literal["public", "shared", "agent", "session"]
+ValidationStatusParam = Literal[
+    "unverified", "validated", "authoritative", "deprecated", "invalidated"
+]
+DeprecationStatusParam = Literal["deprecated", "invalidated"]
 # Keep every MCP inference path on the same resident RAG model.
 LOCAL_TASK_MODEL = OLLAMA_MODEL
 LOCAL_TASK_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_SIMPLE_TASK_TIMEOUT_SECONDS", "150"))
@@ -199,16 +205,27 @@ async def build_client_project_context(
     allow_rootless: bool = False,
 ):
     if allow_rootless and not (project_id or root_id or working_directory):
-        return GlobalWriteContext(
-            write_visibility=write_visibility, read_scope=read_scope,
-            agent_id=agent_id, session_id=session_id,
-            source_types=tuple(source_types or ()), language=language,
-            validation_status=validation_status, min_score=min_score,
-            include_metadata=include_metadata,
-        )
+        try:
+            return GlobalWriteContext(
+                write_visibility=write_visibility, read_scope=read_scope,
+                agent_id=agent_id, session_id=session_id,
+                source_types=tuple(source_types or ()), language=language,
+                validation_status=validation_status, min_score=min_score,
+                include_metadata=include_metadata,
+            )
+        except ValueError as exc:
+            raise ClientContextError("INVALID_CONTEXT", str(exc)) from exc
     if project_id or root_id:
-        if working_directory or not project_id or not root_id:
-            raise ClientContextError("INVALID_CONTEXT", "Explicit project_id and root_id must be provided together.")
+        if working_directory:
+            raise ClientContextError(
+                "INVALID_CONTEXT",
+                "working_directory cannot be combined with project_id or root_id.",
+            )
+        if not project_id or not root_id:
+            raise ClientContextError(
+                "INVALID_CONTEXT",
+                "Explicit project_id and root_id must be provided together.",
+            )
         try:
             return build_project_context(
                 project_id=project_id,
@@ -228,18 +245,21 @@ async def build_client_project_context(
             code = "UNKNOWN_PROJECT" if str(exc) == "Unknown project_id" else "INVALID_CONTEXT"
             raise ClientContextError(code, str(exc)) from exc
     cwd = working_directory or await client_working_directory()
-    return WorkingDirectoryContext(
-        working_directory=cwd,
-        write_visibility=write_visibility,
-        read_scope=read_scope,
-        agent_id=agent_id,
-        session_id=session_id,
-        source_types=tuple(source_types or ()),
-        language=language,
-        validation_status=validation_status,
-        min_score=min_score,
-        include_metadata=include_metadata,
-    )
+    try:
+        return WorkingDirectoryContext(
+            working_directory=cwd,
+            write_visibility=write_visibility,
+            read_scope=read_scope,
+            agent_id=agent_id,
+            session_id=session_id,
+            source_types=tuple(source_types or ()),
+            language=language,
+            validation_status=validation_status,
+            min_score=min_score,
+            include_metadata=include_metadata,
+        )
+    except ValueError as exc:
+        raise ClientContextError("INVALID_CONTEXT", str(exc)) from exc
 
 
 async def build_client_knowledge_context(
@@ -259,15 +279,18 @@ async def build_client_knowledge_context(
     if global_search or not (project_id or root_id or working_directory):
         if project_id or root_id or working_directory:
             raise ClientContextError("INVALID_CONTEXT", "global_search cannot be combined with project/root/cwd.")
-        return GlobalKnowledgeContext(
-            read_scope=read_scope,
-            agent_id=agent_id,
-            session_id=session_id,
-            source_types=tuple(source_types or ()),
-            language=language,
-            min_score=min_score,
-            include_metadata=include_metadata,
-        )
+        try:
+            return GlobalKnowledgeContext(
+                read_scope=read_scope,
+                agent_id=agent_id,
+                session_id=session_id,
+                source_types=tuple(source_types or ()),
+                language=language,
+                min_score=min_score,
+                include_metadata=include_metadata,
+            )
+        except ValueError as exc:
+            raise ClientContextError("INVALID_CONTEXT", str(exc)) from exc
     if project_id:
         if working_directory:
             raise ClientContextError("INVALID_CONTEXT", "project_id cannot be combined with working_directory.")
@@ -302,16 +325,19 @@ async def build_client_knowledge_context(
     if root_id:
         raise ClientContextError("INVALID_CONTEXT", "root_id requires explicit project_id.")
     cwd = working_directory or await client_working_directory()
-    return WorkingDirectoryContext(
-        working_directory=cwd,
-        read_scope=read_scope,
-        agent_id=agent_id,
-        session_id=session_id,
-        source_types=tuple(source_types or ()),
-        language=language,
-        min_score=min_score,
-        include_metadata=include_metadata,
-    )
+    try:
+        return WorkingDirectoryContext(
+            working_directory=cwd,
+            read_scope=read_scope,
+            agent_id=agent_id,
+            session_id=session_id,
+            source_types=tuple(source_types or ()),
+            language=language,
+            min_score=min_score,
+            include_metadata=include_metadata,
+        )
+    except ValueError as exc:
+        raise ClientContextError("INVALID_CONTEXT", str(exc)) from exc
 
 
 def build_correlation_context(
@@ -434,7 +460,7 @@ async def rag_search(
     root_id: str = DEFAULT_ROOT_ID,
     working_directory: str = "",
     global_search: bool = False,
-    read_scope: str = "session",
+    read_scope: ReadScopeParam = "session",
     source_types: Optional[List[str]] = None,
     language: str = "en",
     min_score: float = 0.0,
@@ -535,10 +561,10 @@ async def rag_agentic_search(
     root_id: str = DEFAULT_ROOT_ID,
     working_directory: str = "",
     global_search: bool = False,
-    read_scope: str = "session",
+    read_scope: ReadScopeParam = "session",
     source_types: Optional[List[str]] = None,
     language: str = "en",
-    validation_status: str = "unverified",
+    validation_status: ValidationStatusParam = "unverified",
     min_score: float = 0.0,
     include_metadata: bool = True,
 ) -> str:
@@ -623,10 +649,10 @@ async def rag_save(
     text: str,
     source: str = "agent_generated",
     source_type: str = "llm_output",
-    validation_status: str = "unverified",
+    validation_status: ValidationStatusParam = "unverified",
     agent_id: str = "",
     session_id: str = "",
-    write_visibility: str = "shared",
+    write_visibility: WriteVisibilityParam = "shared",
     importance: int = 5,
     metadata: Optional[Dict[str, Any]] = None,
     project_id: str = DEFAULT_PROJECT_ID,
@@ -641,6 +667,11 @@ async def rag_save(
     next session can read what this one learned. `session-private` is available
     for genuine scratch, but note the server mints a fresh session id per process:
     a session-private row is unreadable from the next session onward.
+
+    `validation_status` must be one of `unverified`, `validated`,
+    `authoritative`, `deprecated`, or `invalidated`. Pass either
+    `working_directory` alone, both `project_id` and `root_id`, or omit all
+    three for rootless global knowledge (without filesystem references).
     """
     corr = build_correlation_context(agent_id, session_id, "rag_save")
     if not text or len(text.strip()) < 10:
@@ -666,6 +697,17 @@ async def rag_save(
             validation_status=validation_status,
             allow_rootless=True,
         )
+        if isinstance(context, GlobalWriteContext) and (
+            file_path
+            or document_id is not None
+            or Path(source).is_absolute()
+            or source.startswith("file:")
+            or any(key in meta for key in ("file", "relative_path", "source_snapshot"))
+        ):
+            raise ClientContextError(
+                "INVALID_CONTEXT",
+                "Global knowledge cannot refer to a filesystem source.",
+            )
         client = RagClient(context)
         res = await asyncio.to_thread(
             client.save,
@@ -678,12 +720,15 @@ async def rag_save(
             document_id=document_id,
         )
         res["correlation"] = corr
-        res["provenance"] = {
-            "source": source,
-            "source_type": source_type,
-            "validation_status": context.validation_status.value,
-            "write_visibility": context.write_visibility.value
-        }
+        if res.get("status") == "success":
+            res["provenance"] = {
+                "source": source,
+                "source_type": source_type,
+                "validation_status": context.validation_status.value,
+                "write_visibility": context.write_visibility.value
+            }
+        elif "error" not in res and res.get("message"):
+            res["error"] = res["message"]
         return json.dumps(res, ensure_ascii=False, separators=(",", ":"))
     except Exception as exc:
         logger.exception("Error in rag_save")
@@ -694,7 +739,7 @@ async def rag_save(
 async def rag_deprecate(
     chunk_id: Optional[int] = None,
     content_hash: str = "",
-    status: str = "deprecated",
+    status: DeprecationStatusParam = "deprecated",
     reason: str = "",
     superseded_by: Optional[int] = None,
     agent_id: str = "",
@@ -702,7 +747,7 @@ async def rag_deprecate(
     project_id: str = DEFAULT_PROJECT_ID,
     root_id: str = DEFAULT_ROOT_ID,
     working_directory: str = "",
-    read_scope: str = "session",
+    read_scope: ReadScopeParam = "session",
 ) -> str:
     """Retire a stored fact so retrieval stops returning it.
 
@@ -764,7 +809,7 @@ async def rag_verify(
     project_id: str = DEFAULT_PROJECT_ID,
     root_id: str = DEFAULT_ROOT_ID,
     working_directory: str = "",
-    read_scope: str = "session",
+    read_scope: ReadScopeParam = "session",
 ) -> str:
     """Record that a stored fact was re-checked and still holds, as of now.
 
@@ -821,7 +866,7 @@ async def rag_stale_report(
     project_id: str = DEFAULT_PROJECT_ID,
     root_id: str = DEFAULT_ROOT_ID,
     working_directory: str = "",
-    read_scope: str = "session",
+    read_scope: ReadScopeParam = "session",
 ) -> str:
     """List stored knowledge that is overdue for re-confirmation, worst first.
 
@@ -1118,7 +1163,7 @@ async def route_query_tool(
     project_id: str = DEFAULT_PROJECT_ID,
     root_id: str = DEFAULT_ROOT_ID,
     working_directory: str = "",
-    read_scope: str = "session",
+    read_scope: ReadScopeParam = "session",
 ) -> str:
     """Server-computed confidence routing."""
     corr = build_correlation_context(agent_id, session_id, "route_query_tool")
@@ -1386,7 +1431,7 @@ async def rag_assistant(
     project_id: str = DEFAULT_PROJECT_ID,
     root_id: str = DEFAULT_ROOT_ID,
     working_directory: str = "",
-    read_scope: str = "session",
+    read_scope: ReadScopeParam = "session",
 ) -> str:
     """Answer from local RAG and local inference only; return unavailable on retrieval failure.
 
